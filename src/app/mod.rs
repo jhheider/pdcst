@@ -113,67 +113,89 @@ impl App {
                             tracing::error!("Failed to remove episode from queue: {}", e);
                         }
 
-                        // Play next episode in queue
-                        match queue_manager_clone.get_next().await {
-                            Ok(Some(next_item)) => {
-                                let next_episode_id = next_item.episode_id;
-                                tracing::info!("Auto-advancing to next episode in queue");
+                        // Play next episode in queue (with retry on failure)
+                        loop {
+                            match queue_manager_clone.get_next().await {
+                                Ok(Some(next_item)) => {
+                                    let next_episode_id = next_item.episode_id;
+                                    tracing::info!("Auto-advancing to next episode in queue");
 
-                                // Load episode details
-                                match db_clone.get_episode(next_episode_id).await {
-                                    Ok(Some(next_episode)) => {
-                                        // Load audio data
-                                        let audio_data_result = if next_episode.is_downloaded() {
-                                            if let Some(path) = &next_episode.local_path {
-                                                match audio_streamer_clone.load_from_file(next_episode.id, path.as_ref()).await {
-                                                    Ok(state) => state.get_buffer().await,
-                                                    Err(e) => {
-                                                        tracing::error!("Failed to load from file: {}", e);
-                                                        continue;
+                                    // Load episode details
+                                    let load_result = match db_clone.get_episode(next_episode_id).await {
+                                        Ok(Some(next_episode)) => {
+                                            // Load audio data
+                                            let audio_data_result = if next_episode.is_downloaded() {
+                                                if let Some(path) = &next_episode.local_path {
+                                                    match audio_streamer_clone.load_from_file(next_episode.id, path.as_ref()).await {
+                                                        Ok(state) => Ok(state.get_buffer().await),
+                                                        Err(e) => Err(format!("Failed to load from file: {}", e)),
                                                     }
+                                                } else {
+                                                    Err("Downloaded episode missing local_path".to_string())
                                                 }
                                             } else {
-                                                tracing::error!("Downloaded episode missing local_path");
-                                                continue;
-                                            }
-                                        } else {
-                                            match audio_streamer_clone.stream_episode(next_episode.id, &next_episode.url).await {
-                                                Ok(state) => state.get_buffer().await,
-                                                Err(e) => {
-                                                    tracing::error!("Failed to stream episode: {}", e);
-                                                    continue;
+                                                match audio_streamer_clone.stream_episode(next_episode.id, &next_episode.url).await {
+                                                    Ok(state) => Ok(state.get_buffer().await),
+                                                    Err(e) => Err(format!("Failed to stream episode: {}", e)),
                                                 }
+                                            };
+
+                                            // Play the loaded audio
+                                            match audio_data_result {
+                                                Ok(audio_data) => {
+                                                    match audio_player_clone.play_from_memory(next_episode.id, &audio_data).await {
+                                                        Ok(_) => {
+                                                            tracing::info!("Auto-playing: {}", next_episode.title);
+
+                                                            // Emit queue advanced event
+                                                            event_bus_clone.publish(StateEvent::QueueAdvanced {
+                                                                next_episode_id
+                                                            });
+                                                            Ok(())
+                                                        }
+                                                        Err(e) => Err(format!("Failed to play: {}", e)),
+                                                    }
+                                                }
+                                                Err(e) => Err(e),
                                             }
-                                        };
+                                        }
+                                        Ok(None) => Err(format!("Episode {} not found in database", next_episode_id)),
+                                        Err(e) => Err(format!("Database error: {}", e)),
+                                    };
 
-                                        // Play the loaded audio
-                                        if let Err(e) = audio_player_clone
-                                            .play_from_memory(next_episode.id, &audio_data_result)
-                                            .await
-                                        {
-                                            tracing::error!("Failed to play next episode: {}", e);
-                                        } else {
-                                            tracing::info!("Auto-playing: {}", next_episode.title);
-
-                                            // Emit queue advanced event
-                                            event_bus_clone.publish(StateEvent::QueueAdvanced {
-                                                next_episode_id
+                                    match load_result {
+                                        Ok(_) => {
+                                            // Successfully loaded and started playing
+                                            break;
+                                        }
+                                        Err(error_msg) => {
+                                            // Failed to play this episode - emit error and try next
+                                            tracing::error!("Failed to auto-play episode {}: {}", next_episode_id, error_msg);
+                                            event_bus_clone.publish(StateEvent::PlaybackError {
+                                                error: format!("Auto-play failed: {}", error_msg)
                                             });
+
+                                            // Remove failed episode from queue and try next
+                                            if let Err(e) = queue_manager_clone.remove_episode(next_episode_id).await {
+                                                tracing::error!("Failed to remove failed episode from queue: {}", e);
+                                                break;
+                                            }
+
+                                            // Continue loop to try next episode
                                         }
                                     }
-                                    Ok(None) => {
-                                        tracing::warn!("Episode {} not found in database", next_episode_id);
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to get next episode: {}", e);
-                                    }
                                 }
-                            }
-                            Ok(None) => {
-                                tracing::info!("Queue empty, no more episodes to play");
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to get next from queue: {}", e);
+                                Ok(None) => {
+                                    tracing::info!("Queue empty, no more episodes to play");
+                                    break;
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to get next from queue: {}", e);
+                                    event_bus_clone.publish(StateEvent::PlaybackError {
+                                        error: format!("Queue error: {}", e)
+                                    });
+                                    break;
+                                }
                             }
                         }
                     }
@@ -329,6 +351,10 @@ impl App {
             PlaybackPosition { position_secs } => {
                 self.state.playback_position = position_secs;
             }
+            PlaybackError { error } => {
+                tracing::error!("Playback error: {}", error);
+                self.state.show_error(format!("Playback error: {}", error));
+            }
             VolumeChanged { volume } => {
                 self.state.volume = volume;
             }
@@ -340,6 +366,18 @@ impl App {
                 if self.state.current_view == View::Queue {
                     let _ = self.state.load_queue().await;
                 }
+            }
+            DownloadProgress { episode_id, percent } => {
+                // Update download progress for the episode
+                tracing::debug!("Download progress for {}: {:.1}%", episode_id, percent);
+            }
+            DownloadCompleted { episode_id } => {
+                tracing::info!("Download completed for episode {}", episode_id);
+                self.state.set_status("Download completed".to_string());
+            }
+            DownloadFailed { episode_id, error } => {
+                tracing::error!("Download failed for {}: {}", episode_id, error);
+                self.state.show_error(format!("Download failed: {}", error));
             }
             _ => {
                 // Other events don't need immediate UI state updates
