@@ -93,11 +93,6 @@ pub struct AudioPlayer {
     state: Arc<AudioState>,
     /// Ensures operations like seek are atomic
     operation_lock: Arc<TokioMutex<()>>,
-    /// Channel for playback completion events (kept to maintain channel lifetime)
-    #[allow(dead_code)]
-    completion_tx: tokio::sync::mpsc::UnboundedSender<Uuid>,
-    /// Receiver for playback completion events (take once to set up callback)
-    completion_rx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Uuid>>>>,
     /// Event bus for publishing state changes
     event_bus: Arc<EventBus>,
 }
@@ -109,31 +104,20 @@ impl AudioPlayer {
     pub fn new(event_bus: Arc<EventBus>) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
         let state = Arc::new(AudioState::new());
-        let (completion_tx, completion_rx) = tokio::sync::mpsc::unbounded_channel();
 
         // Spawn dedicated audio thread
         let state_clone = state.clone();
-        let completion_tx_clone = completion_tx.clone();
         let event_bus_clone = event_bus.clone();
         std::thread::spawn(move || {
-            audio_thread(rx, state_clone, completion_tx_clone, event_bus_clone);
+            audio_thread(rx, state_clone, event_bus_clone);
         });
 
         Ok(Self {
             command_tx: tx,
             state,
             operation_lock: Arc::new(TokioMutex::new(())),
-            completion_tx,
-            completion_rx: Arc::new(Mutex::new(Some(completion_rx))),
             event_bus,
         })
-    }
-
-    /// Take the completion receiver to set up a callback for when episodes finish playing
-    ///
-    /// This can only be called once. Returns None if already taken.
-    pub fn take_completion_rx(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<Uuid>> {
-        self.completion_rx.lock().unwrap().take()
     }
 
     /// Play audio from memory buffer
@@ -332,7 +316,6 @@ impl Drop for AudioPlayer {
 fn audio_thread(
     rx: mpsc::Receiver<AudioCommand>,
     state: Arc<AudioState>,
-    completion_tx: tokio::sync::mpsc::UnboundedSender<Uuid>,
     event_bus: Arc<EventBus>,
 ) {
     // Create audio output stream - this stays on this thread
@@ -365,6 +348,7 @@ fn audio_thread(
                     &state,
                     &mut playback_start_time,
                     &mut start_position,
+                    &event_bus,
                 );
                 if should_shutdown {
                     break;
@@ -395,12 +379,9 @@ fn audio_thread(
                         state.set_paused(false);
                         playback_start_time = None;
 
-                        // Notify completion
+                        // Notify completion via event bus
                         if let Some(episode_id) = current_playing_episode.take() {
                             tracing::debug!("Playback completed for episode {}", episode_id);
-                            let _ = completion_tx.send(episode_id);
-
-                            // Emit playback completed event
                             event_bus.publish(StateEvent::PlaybackCompleted { episode_id });
                         } else {
                             tracing::debug!("Playback completed");
@@ -424,6 +405,7 @@ fn handle_command(
     state: &Arc<AudioState>,
     playback_start_time: &mut Option<Instant>,
     start_position: &mut Duration,
+    event_bus: &Arc<EventBus>,
 ) {
         match cmd {
             AudioCommand::Play { episode_id, data } => {
@@ -455,12 +437,16 @@ fn handle_command(
                                 state.set_position(Duration::ZERO);
                             }
                             Err(e) => {
-                                tracing::error!("Failed to create sink: {}", e);
+                                let error_msg = format!("Failed to create sink: {}", e);
+                                tracing::error!("{}", error_msg);
+                                event_bus.publish(StateEvent::PlaybackError { error: error_msg });
                             }
                         }
                     }
                     Err(e) => {
-                        tracing::error!("Failed to decode audio: {}", e);
+                        let error_msg = format!("Failed to decode audio: {}", e);
+                        tracing::error!("{}", error_msg);
+                        event_bus.publish(StateEvent::PlaybackError { error: error_msg });
                     }
                 }
             }

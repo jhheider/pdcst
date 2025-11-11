@@ -65,6 +65,12 @@ impl App {
         // Load artwork cache from disk
         artwork_manager.load_cache_from_disk().await?;
 
+        // Clone for auto-advance task before moving into AppState
+        let audio_player_clone = audio_player.clone();
+        let audio_streamer_clone = audio_streamer.clone();
+        let queue_manager_clone = queue_manager.clone();
+        let db_clone = db.clone();
+
         // Create application state
         let state = AppState::new(
             config,
@@ -76,11 +82,115 @@ impl App {
             feed_refresher,
             podcast_search,
             artwork_manager,
-            event_bus,
+            event_bus.clone(),
         );
 
         // Create UI
         let ui = Ui::new();
+
+        // Set up auto-advance: subscribe to PlaybackCompleted events
+        let mut event_rx_auto_advance = event_bus.subscribe();
+        let event_bus_clone = event_bus.clone();
+
+        tokio::spawn(async move {
+            loop {
+                match event_rx_auto_advance.recv().await {
+                    Ok(StateEvent::PlaybackCompleted { episode_id: completed_episode_id }) => {
+                        tracing::info!("Episode {} completed, checking queue for next episode", completed_episode_id);
+
+                        // Mark episode as played
+                        if let Err(e) = db_clone.mark_episode_played(completed_episode_id, true).await {
+                            tracing::error!("Failed to mark episode as played: {}", e);
+                        } else {
+                            // Emit episode marked played event
+                            event_bus_clone.publish(StateEvent::EpisodeMarkedPlayed {
+                                episode_id: completed_episode_id
+                            });
+                        }
+
+                        // Remove from queue
+                        if let Err(e) = queue_manager_clone.remove_episode(completed_episode_id).await {
+                            tracing::error!("Failed to remove episode from queue: {}", e);
+                        }
+
+                        // Play next episode in queue
+                        match queue_manager_clone.get_next().await {
+                            Ok(Some(next_item)) => {
+                                let next_episode_id = next_item.episode_id;
+                                tracing::info!("Auto-advancing to next episode in queue");
+
+                                // Load episode details
+                                match db_clone.get_episode(next_episode_id).await {
+                                    Ok(Some(next_episode)) => {
+                                        // Load audio data
+                                        let audio_data_result = if next_episode.is_downloaded() {
+                                            if let Some(path) = &next_episode.local_path {
+                                                match audio_streamer_clone.load_from_file(next_episode.id, path.as_ref()).await {
+                                                    Ok(state) => state.get_buffer().await,
+                                                    Err(e) => {
+                                                        tracing::error!("Failed to load from file: {}", e);
+                                                        continue;
+                                                    }
+                                                }
+                                            } else {
+                                                tracing::error!("Downloaded episode missing local_path");
+                                                continue;
+                                            }
+                                        } else {
+                                            match audio_streamer_clone.stream_episode(next_episode.id, &next_episode.url).await {
+                                                Ok(state) => state.get_buffer().await,
+                                                Err(e) => {
+                                                    tracing::error!("Failed to stream episode: {}", e);
+                                                    continue;
+                                                }
+                                            }
+                                        };
+
+                                        // Play the loaded audio
+                                        if let Err(e) = audio_player_clone
+                                            .play_from_memory(next_episode.id, &audio_data_result)
+                                            .await
+                                        {
+                                            tracing::error!("Failed to play next episode: {}", e);
+                                        } else {
+                                            tracing::info!("Auto-playing: {}", next_episode.title);
+
+                                            // Emit queue advanced event
+                                            event_bus_clone.publish(StateEvent::QueueAdvanced {
+                                                next_episode_id
+                                            });
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        tracing::warn!("Episode {} not found in database", next_episode_id);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to get next episode: {}", e);
+                                    }
+                                }
+                            }
+                            Ok(None) => {
+                                tracing::info!("Queue empty, no more episodes to play");
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to get next from queue: {}", e);
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        // Ignore other events
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!("Auto-advance task lagged, skipped {} events", skipped);
+                        // Continue processing - we'll catch the next PlaybackCompleted
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::info!("Event bus closed, stopping auto-advance");
+                        break;
+                    }
+                }
+            }
+        });
 
         tracing::info!("Application initialized successfully");
 
@@ -135,14 +245,36 @@ impl App {
         loop {
             tokio::select! {
                 // Handle state events
-                Ok(state_event) = event_rx.recv() => {
-                    // Update state based on event
-                    self.handle_state_event(state_event).await?;
+                event_result = event_rx.recv() => {
+                    match event_result {
+                        Ok(state_event) => {
+                            // Update state based on event
+                            self.handle_state_event(state_event).await?;
 
-                    // Redraw UI
-                    terminal.draw(|f| {
-                        self.ui.render(f, &self.state);
-                    })?;
+                            // Redraw UI
+                            terminal.draw(|f| {
+                                self.ui.render(f, &self.state);
+                            })?;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!("UI event receiver lagged, skipped {} events - requesting full state refresh", skipped);
+
+                            // When events are dropped, sync state from source of truth
+                            self.state.is_playing = self.state.audio_player.is_playing().await;
+                            self.state.volume = self.state.audio_player.get_volume().await;
+                            self.state.playback_speed = self.state.audio_player.get_speed().await;
+                            self.state.playback_position = self.state.audio_player.get_position().await;
+
+                            // Redraw with refreshed state
+                            terminal.draw(|f| {
+                                self.ui.render(f, &self.state);
+                            })?;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tracing::error!("Event bus closed unexpectedly");
+                            break;
+                        }
+                    }
                 }
 
                 // Poll for keyboard input
@@ -522,10 +654,14 @@ impl App {
 
         // Insert each subscription
         for sub in subscriptions {
+            let subscription_id = sub.id;
             match self.state.db.insert_subscription(&sub).await {
                 Ok(_) => {
                     tracing::debug!("Imported subscription: {}", sub.title);
                     imported += 1;
+
+                    // Emit event
+                    self.state.event_bus.publish(StateEvent::SubscriptionAdded { subscription_id });
                 }
                 Err(e) => {
                     // Log but continue - might be duplicate RSS URL

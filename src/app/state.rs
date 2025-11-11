@@ -78,99 +78,38 @@ impl AppState {
         artwork_manager: Arc<ArtworkManager>,
         event_bus: Arc<EventBus>,
     ) -> Self {
-        // Set up queue auto-advance
-        if let Some(mut completion_rx) = audio_player.take_completion_rx() {
-            let queue_manager_clone = queue_manager.clone();
-            let db_clone = db.clone();
-            let audio_streamer_clone = audio_streamer.clone();
-            let audio_player_clone = audio_player.clone();
+        // Note: Auto-advance logic has been moved to App to use event-driven architecture
+        // instead of the old completion channel. This eliminates the zombie task issue.
 
-            tokio::spawn(async move {
-                while let Some(completed_episode_id) = completion_rx.recv().await {
-                    tracing::info!("Episode {} completed, checking queue for next episode", completed_episode_id);
+        // Clone audio_player to query initial state (sync before events start flowing)
+        let audio_player_for_init = audio_player.clone();
+        let event_bus_for_init = event_bus.clone();
 
-                    // Mark episode as played
-                    if let Err(e) = db_clone.mark_episode_played(completed_episode_id, true).await {
-                        tracing::error!("Failed to mark episode as played: {}", e);
-                    }
+        // Spawn task to initialize playback state from AudioPlayer
+        // This prevents startup race condition where UI shows wrong initial values
+        tokio::spawn(async move {
+            // Small delay to ensure audio player is fully initialized
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-                    // Remove from queue
-                    if let Err(e) = queue_manager_clone.remove_episode(completed_episode_id).await {
-                        tracing::error!("Failed to remove episode from queue: {}", e);
-                    }
+            // Query current state and emit initial events to sync UI
+            let volume = audio_player_for_init.get_volume().await;
+            let speed = audio_player_for_init.get_speed().await;
 
-                    // Play next episode in queue
-                    match queue_manager_clone.get_next().await {
-                        Ok(Some(next_item)) => {
-                            tracing::info!("Auto-advancing to next episode in queue");
+            event_bus_for_init.publish(crate::app::events::StateEvent::VolumeChanged { volume });
+            event_bus_for_init.publish(crate::app::events::StateEvent::SpeedChanged { speed });
+        });
 
-                            // Load episode details
-                            match db_clone.get_episode(next_item.episode_id).await {
-                                Ok(Some(next_episode)) => {
-                                    // Load audio data
-                                    let audio_data_result = if next_episode.is_downloaded() {
-                                        if let Some(path) = &next_episode.local_path {
-                                            match audio_streamer_clone.load_from_file(next_episode.id, path.as_ref()).await {
-                                                Ok(state) => state.get_buffer().await,
-                                                Err(e) => {
-                                                    tracing::error!("Failed to load from file: {}", e);
-                                                    continue;
-                                                }
-                                            }
-                                        } else {
-                                            tracing::error!("Downloaded episode missing local_path");
-                                            continue;
-                                        }
-                                    } else {
-                                        match audio_streamer_clone.stream_episode(next_episode.id, &next_episode.url).await {
-                                            Ok(state) => state.get_buffer().await,
-                                            Err(e) => {
-                                                tracing::error!("Failed to stream episode: {}", e);
-                                                continue;
-                                            }
-                                        }
-                                    };
-
-                                    // Play the loaded audio
-                                    if let Err(e) = audio_player_clone
-                                        .play_from_memory(next_episode.id, &audio_data_result)
-                                        .await
-                                    {
-                                        tracing::error!("Failed to play next episode: {}", e);
-                                    } else {
-                                        tracing::info!("Auto-playing: {}", next_episode.title);
-                                    }
-                                }
-                                Ok(None) => {
-                                    tracing::warn!("Episode {} not found in database", next_item.episode_id);
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to get next episode: {}", e);
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            tracing::info!("Queue empty, no more episodes to play");
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to get next from queue: {}", e);
-                        }
-                    }
-                }
-            });
-        }
-
-        let state = Self {
+        Self {
             config,
             db,
-            audio_player: audio_player.clone(),
+            audio_player,
             audio_streamer,
             queue_manager,
             download_manager,
             feed_refresher,
             podcast_search,
             artwork_manager,
-            event_bus: event_bus.clone(),
+            event_bus,
             current_view: View::Subscriptions,
             selected_index: 0,
             scroll_offset: 0,
@@ -189,12 +128,7 @@ impl AppState {
             playback_position: 0.0,
             playback_speed: 1.0,
             volume: 1.0,
-        };
-
-        // State updates will come from events published by AudioPlayer, DownloadManager, etc.
-        // No need for manual polling anymore!
-
-        state
+        }
     }
 
     // Note: update() method removed - state is now event-driven
@@ -338,6 +272,11 @@ impl AppState {
 
         // Insert into database
         self.db.insert_subscription(&subscription).await?;
+
+        // Emit event
+        self.event_bus.publish(crate::app::events::StateEvent::SubscriptionAdded {
+            subscription_id: subscription.id
+        });
 
         // Reload subscriptions
         self.load_subscriptions().await?;
@@ -547,9 +486,17 @@ impl AppState {
     pub async fn toggle_played_status(&mut self) -> Result<()> {
         if self.current_view == View::Episodes {
             if let Some(episode) = self.episodes.get(self.selected_index) {
+                let episode_id = episode.id;
                 let new_status = !episode.played;
-                self.db.mark_episode_played(episode.id, new_status).await?;
+                self.db.mark_episode_played(episode_id, new_status).await?;
                 tracing::info!("Marked episode as {}", if new_status { "played" } else { "unplayed" });
+
+                // Emit event
+                if new_status {
+                    self.event_bus.publish(crate::app::events::StateEvent::EpisodeMarkedPlayed { episode_id });
+                } else {
+                    self.event_bus.publish(crate::app::events::StateEvent::EpisodeMarkedUnplayed { episode_id });
+                }
 
                 // Reload episodes to update UI
                 if let Some(sub) = &self.current_subscription {
