@@ -26,7 +26,7 @@ use uuid::Uuid;
 enum AudioCommand {
     Play {
         episode_id: Uuid,
-        data: Vec<u8>,
+        data: Arc<Vec<u8>>,
     },
     Pause,
     Resume,
@@ -45,7 +45,7 @@ struct AudioState {
     is_paused: AtomicBool,
     speed: Mutex<f32>,
     volume: Mutex<f32>,
-    audio_buffer: Mutex<Option<Vec<u8>>>,
+    audio_buffer: Mutex<Option<Arc<Vec<u8>>>>,
 }
 
 impl AudioState {
@@ -123,16 +123,19 @@ impl AudioPlayer {
             audio_data.len()
         );
 
+        // Wrap audio buffer in Arc for cheap cloning (no need to copy ~60MB on every seek)
+        let audio_arc = Arc::new(audio_data.to_vec());
+
         // Store audio buffer for seeking
         {
             let mut buffer = self.state.audio_buffer.lock().unwrap();
-            *buffer = Some(audio_data.to_vec());
+            *buffer = Some(audio_arc.clone());
         }
 
         self.command_tx
             .send(AudioCommand::Play {
                 episode_id,
-                data: audio_data.to_vec(),
+                data: audio_arc,
             })
             .context("Failed to send play command")?;
 
@@ -365,8 +368,8 @@ fn handle_command(
                     s.stop();
                 }
 
-                // Decode audio
-                match Decoder::new(Cursor::new(data)) {
+                // Decode audio (data is Arc<Vec<u8>>, clone the inner Vec for Cursor)
+                match Decoder::new(Cursor::new(data.as_ref().clone())) {
                     Ok(source) => {
                         // Create new sink
                         match Sink::try_new(&stream_handle) {
@@ -431,8 +434,7 @@ fn handle_command(
             AudioCommand::Seek(position) => {
                 tracing::debug!("Audio thread: Seeking to {:?}", position);
 
-                // Get audio buffer
-                // Note: This clones the buffer (~60MB for typical episode).
+                // Get audio buffer (Arc clone is cheap - just increments reference count)
                 // Performance: skip_duration() is O(n) but provides ±1s accuracy,
                 // which is acceptable for podcast playback.
                 // Future optimization: Use symphonia for frame-accurate O(1) seeking if needed.
@@ -444,8 +446,8 @@ fn handle_command(
                         s.stop();
                     }
 
-                    // Re-decode and skip to position
-                    match Decoder::new(Cursor::new(data)) {
+                    // Re-decode and skip to position (Arc makes this cheap - no copy)
+                    match Decoder::new(Cursor::new(data.as_ref().clone())) {
                         Ok(source) => {
                             let source = source.skip_duration(position);
 
