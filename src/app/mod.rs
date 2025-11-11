@@ -138,74 +138,190 @@ impl App {
     }
 
     async fn handle_key_event(&mut self, key: KeyCode) -> Result<()> {
-        use state::View;
+        use state::{Modal, View};
 
+        // Handle modal-specific keys first
+        match &self.state.modal {
+            Modal::Help | Modal::Error(_) => {
+                match key {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        self.state.close_modal();
+                        return Ok(());
+                    }
+                    _ => return Ok(()), // Ignore other keys when modal is open
+                }
+            }
+            Modal::Confirm { .. } => {
+                match key {
+                    KeyCode::Enter => {
+                        // TODO: Execute confirmed action
+                        self.state.close_modal();
+                        return Ok(());
+                    }
+                    KeyCode::Esc => {
+                        self.state.close_modal();
+                        return Ok(());
+                    }
+                    _ => return Ok(()),
+                }
+            }
+            Modal::None => {}
+        }
+
+        // Handle search input
+        if self.state.current_view == View::Search && !matches!(key, KeyCode::Esc | KeyCode::Char('1'..='4')) {
+            match key {
+                KeyCode::Char(c) if !c.is_control() => {
+                    self.state.append_search_char(c);
+                    return Ok(());
+                }
+                KeyCode::Backspace => {
+                    self.state.delete_search_char();
+                    return Ok(());
+                }
+                KeyCode::Enter => {
+                    // Trigger search
+                    if !self.state.search_input.is_empty() {
+                        self.state.set_status("Searching...".to_string());
+                        match self.state.search_podcasts(&self.state.search_input.clone()).await {
+                            Ok(_) => {
+                                self.state.selected_index = 0;
+                                self.state.clear_status();
+                            }
+                            Err(e) => {
+                                self.state.show_error(format!("Search failed: {}", e));
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
+        // Global shortcuts
         match key {
+            // Help modal
+            KeyCode::Char('?') => {
+                self.state.show_help_modal();
+                return Ok(());
+            }
+
+            // Esc - close modal or exit search
+            KeyCode::Esc => {
+                if self.state.modal != Modal::None {
+                    self.state.close_modal();
+                } else if self.state.current_view == View::Search {
+                    self.state.exit_search_mode();
+                }
+                return Ok(());
+            }
+
             // Playback controls
             KeyCode::Char(' ') => {
-                // Play/pause
-                self.state.toggle_playback().await?;
+                if let Err(e) = self.state.toggle_playback().await {
+                    self.state.show_error(format!("Playback error: {}", e));
+                }
             }
             KeyCode::Char('n') => {
-                // Next episode (from queue)
-                self.state.play_next_in_queue().await?;
+                if let Err(e) = self.state.play_next_in_queue().await {
+                    self.state.show_error(format!("Failed to play next: {}", e));
+                }
             }
             KeyCode::Char('p') | KeyCode::Char('P') => {
-                // Previous episode (restart current)
-                self.state.restart_current_episode().await?;
+                if let Err(e) = self.state.restart_current_episode().await {
+                    self.state.show_error(format!("Failed to restart: {}", e));
+                }
             }
 
             // Volume controls
             KeyCode::Char('+') | KeyCode::Char('=') => {
-                self.state.increase_volume(0.1).await?;
+                if let Err(e) = self.state.increase_volume(0.1).await {
+                    tracing::error!("Volume error: {}", e);
+                }
             }
             KeyCode::Char('-') | KeyCode::Char('_') => {
-                self.state.decrease_volume(0.1).await?;
+                if let Err(e) = self.state.decrease_volume(0.1).await {
+                    tracing::error!("Volume error: {}", e);
+                }
             }
             KeyCode::Char('m') => {
-                self.state.toggle_mute().await?;
+                if let Err(e) = self.state.toggle_mute().await {
+                    tracing::error!("Mute error: {}", e);
+                }
             }
 
             // Playback speed controls
             KeyCode::Char('[') => {
-                self.state.decrease_speed(0.1).await?;
+                if let Err(e) = self.state.decrease_speed(0.1).await {
+                    tracing::error!("Speed error: {}", e);
+                }
             }
             KeyCode::Char(']') => {
-                self.state.increase_speed(0.1).await?;
+                if let Err(e) = self.state.increase_speed(0.1).await {
+                    tracing::error!("Speed error: {}", e);
+                }
             }
 
             // Seeking
             KeyCode::Left => {
-                self.state.seek_backward(10.0).await?;
+                if let Err(e) = self.state.seek_backward(10.0).await {
+                    tracing::error!("Seek error: {}", e);
+                }
             }
             KeyCode::Right => {
-                self.state.seek_forward(10.0).await?;
+                if let Err(e) = self.state.seek_forward(10.0).await {
+                    tracing::error!("Seek error: {}", e);
+                }
             }
             KeyCode::Char('<') => {
-                self.state.seek_backward(30.0).await?;
+                if let Err(e) = self.state.seek_backward(30.0).await {
+                    tracing::error!("Seek error: {}", e);
+                }
             }
             KeyCode::Char('>') => {
-                self.state.seek_forward(30.0).await?;
+                if let Err(e) = self.state.seek_forward(30.0).await {
+                    tracing::error!("Seek error: {}", e);
+                }
             }
 
             // View navigation
             KeyCode::Char('1') => {
                 self.state.set_view(View::Subscriptions);
+                self.state.selected_index = 0;
             }
             KeyCode::Char('2') => {
                 self.state.set_view(View::Queue);
+                self.state.selected_index = 0;
+                // Load queue items
+                if let Err(e) = self.state.load_queue().await {
+                    self.state.show_error(format!("Failed to load queue: {}", e));
+                }
             }
             KeyCode::Char('3') => {
                 self.state.set_view(View::Search);
+                self.state.selected_index = 0;
+                self.state.clear_search_input();
             }
             KeyCode::Char('4') => {
                 self.state.set_view(View::Settings);
+                self.state.selected_index = 0;
             }
             KeyCode::Tab => {
                 self.state.next_view();
+                self.state.selected_index = 0;
+                // Load data for new view
+                if self.state.current_view == View::Queue {
+                    let _ = self.state.load_queue().await;
+                }
             }
             KeyCode::BackTab => {
                 self.state.previous_view();
+                self.state.selected_index = 0;
+                // Load data for new view
+                if self.state.current_view == View::Queue {
+                    let _ = self.state.load_queue().await;
+                }
             }
 
             // List navigation
@@ -230,33 +346,72 @@ impl App {
 
             // Item selection and actions
             KeyCode::Enter => {
-                self.state.select_item().await?;
+                if let Err(e) = self.state.select_item().await {
+                    self.state.show_error(format!("Selection failed: {}", e));
+                }
             }
             KeyCode::Char('a') => {
-                self.state.add_selected_to_queue().await?;
+                if let Err(e) = self.state.add_selected_to_queue().await {
+                    self.state.show_error(format!("Failed to add to queue: {}", e));
+                } else {
+                    self.state.set_status("Added to queue".to_string());
+                    // Auto-clear status after showing
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    self.state.clear_status();
+                }
             }
             KeyCode::Char('d') => {
-                self.state.download_selected_episode().await?;
+                self.state.set_status("Starting download...".to_string());
+                if let Err(e) = self.state.download_selected_episode().await {
+                    self.state.show_error(format!("Download failed: {}", e));
+                } else {
+                    self.state.set_status("Download started".to_string());
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    self.state.clear_status();
+                }
             }
             KeyCode::Char('x') => {
-                self.state.delete_selected_download().await?;
+                if let Err(e) = self.state.delete_selected_download().await {
+                    self.state.show_error(format!("Failed to delete: {}", e));
+                } else {
+                    self.state.set_status("Download deleted".to_string());
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    self.state.clear_status();
+                }
             }
             KeyCode::Char('r') => {
-                self.state.refresh_selected_subscription().await?;
+                self.state.set_status("Refreshing feed...".to_string());
+                if let Err(e) = self.state.refresh_selected_subscription().await {
+                    self.state.show_error(format!("Refresh failed: {}", e));
+                } else {
+                    self.state.set_status("Feed refreshed".to_string());
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    self.state.clear_status();
+                }
             }
             KeyCode::Char('R') => {
-                self.state.refresh_all_subscriptions().await?;
+                self.state.set_status("Refreshing all feeds...".to_string());
+                if let Err(e) = self.state.refresh_all_subscriptions().await {
+                    self.state.show_error(format!("Refresh all failed: {}", e));
+                } else {
+                    self.state.set_status("All feeds refreshed".to_string());
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    self.state.clear_status();
+                }
             }
             KeyCode::Char('s') => {
-                self.state.toggle_played_status().await?;
+                if let Err(e) = self.state.toggle_played_status().await {
+                    self.state.show_error(format!("Failed to toggle played: {}", e));
+                } else {
+                    self.state.set_status("Toggled played status".to_string());
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    self.state.clear_status();
+                }
             }
 
             // Search
             KeyCode::Char('/') => {
                 self.state.enter_search_mode();
-            }
-            KeyCode::Esc => {
-                self.state.exit_search_mode();
             }
 
             _ => {}
