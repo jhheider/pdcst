@@ -90,3 +90,135 @@ impl OpmlExporter {
         String::from_utf8(buffer).context("Failed to convert OPML to string")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_subscription(title: &str, rss_url: &str) -> Subscription {
+        let mut sub = Subscription::new(title.to_string(), rss_url.to_string());
+        sub.website_url = Some(format!("https://{}.com", title.to_lowercase().replace(' ', "")));
+        sub
+    }
+
+    #[test]
+    fn test_export_to_string() {
+        let subs = vec![
+            create_test_subscription("Test Podcast 1", "https://example.com/feed1.xml"),
+            create_test_subscription("Test Podcast 2", "https://example.com/feed2.xml"),
+        ];
+
+        let result = OpmlExporter::export_to_string(&subs);
+        assert!(result.is_ok());
+
+        let opml_str = result.unwrap();
+        assert!(opml_str.contains("Test Podcast 1"));
+        assert!(opml_str.contains("https://example.com/feed1.xml"));
+        assert!(opml_str.contains("Test Podcast 2"));
+        assert!(opml_str.contains("https://example.com/feed2.xml"));
+    }
+
+    #[test]
+    fn test_import_from_string() {
+        let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Test Podcast" type="rss" xmlUrl="https://example.com/feed.xml" htmlUrl="https://example.com"/>
+  </body>
+</opml>"#;
+
+        let result = OpmlImporter::import_from_string(opml_content);
+        assert!(result.is_ok());
+
+        let subs = result.unwrap();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].title, "Test Podcast");
+        assert_eq!(subs[0].rss_url, "https://example.com/feed.xml");
+        assert_eq!(subs[0].website_url, Some("https://example.com".to_string()));
+    }
+
+    #[test]
+    fn test_import_nested_outlines() {
+        let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Technology">
+      <outline text="Podcast 1" type="rss" xmlUrl="https://example.com/feed1.xml"/>
+      <outline text="Podcast 2" type="rss" xmlUrl="https://example.com/feed2.xml"/>
+    </outline>
+    <outline text="Podcast 3" type="rss" xmlUrl="https://example.com/feed3.xml"/>
+  </body>
+</opml>"#;
+
+        let result = OpmlImporter::import_from_string(opml_content);
+        assert!(result.is_ok());
+
+        let subs = result.unwrap();
+        assert_eq!(subs.len(), 3);
+    }
+
+    #[test]
+    fn test_round_trip() {
+        let original_subs = vec![
+            create_test_subscription("Podcast A", "https://example.com/a.xml"),
+            create_test_subscription("Podcast B", "https://example.com/b.xml"),
+            create_test_subscription("Podcast C", "https://example.com/c.xml"),
+        ];
+
+        // Export to string
+        let opml_str = OpmlExporter::export_to_string(&original_subs).unwrap();
+
+        // Import back
+        let imported_subs = OpmlImporter::import_from_string(&opml_str).unwrap();
+
+        // Verify
+        assert_eq!(imported_subs.len(), original_subs.len());
+        for (original, imported) in original_subs.iter().zip(imported_subs.iter()) {
+            assert_eq!(imported.title, original.title);
+            assert_eq!(imported.rss_url, original.rss_url);
+            assert_eq!(imported.website_url, original.website_url);
+        }
+    }
+
+    #[test]
+    fn test_export_and_import_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let opml_path = temp_dir.path().join("test.opml");
+
+        let subs = vec![
+            create_test_subscription("File Test 1", "https://example.com/f1.xml"),
+            create_test_subscription("File Test 2", "https://example.com/f2.xml"),
+        ];
+
+        // Export to file
+        OpmlExporter::export_to_file(&subs, &opml_path).unwrap();
+        assert!(opml_path.exists());
+
+        // Import from file
+        let imported = OpmlImporter::import_from_file(&opml_path).unwrap();
+        assert_eq!(imported.len(), 2);
+        assert_eq!(imported[0].title, "File Test 1");
+        assert_eq!(imported[1].title, "File Test 2");
+    }
+
+    #[test]
+    fn test_empty_xml_url_ignored() {
+        let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Valid Podcast" type="rss" xmlUrl="https://example.com/feed.xml"/>
+    <outline text="Category" type="link"/>
+    <outline text="Empty URL" type="rss" xmlUrl=""/>
+  </body>
+</opml>"#;
+
+        let result = OpmlImporter::import_from_string(opml_content);
+        assert!(result.is_ok());
+
+        let subs = result.unwrap();
+        // Only the valid podcast should be imported
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].title, "Valid Podcast");
+    }
+}
