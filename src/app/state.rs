@@ -1,3 +1,4 @@
+use crate::app::events::EventBus;
 use crate::artwork::ArtworkManager;
 use crate::audio::{AudioPlayer, AudioStreamer};
 use crate::download::DownloadManager;
@@ -37,6 +38,7 @@ pub struct AppState {
     pub feed_refresher: Arc<FeedRefresher>,
     pub podcast_search: Arc<PodcastSearch>,
     pub artwork_manager: Arc<ArtworkManager>,
+    pub event_bus: Arc<EventBus>,
 
     // UI state
     pub current_view: View,
@@ -74,6 +76,7 @@ impl AppState {
         feed_refresher: Arc<FeedRefresher>,
         podcast_search: Arc<PodcastSearch>,
         artwork_manager: Arc<ArtworkManager>,
+        event_bus: Arc<EventBus>,
     ) -> Self {
         // Set up queue auto-advance
         if let Some(mut completion_rx) = audio_player.take_completion_rx() {
@@ -167,6 +170,7 @@ impl AppState {
             feed_refresher,
             podcast_search,
             artwork_manager,
+            event_bus,
             current_view: View::Subscriptions,
             selected_index: 0,
             scroll_offset: 0,

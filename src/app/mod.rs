@@ -1,6 +1,9 @@
 pub mod events;
 pub mod state;
 
+pub use events::{EventBus, StateEvent};
+pub use state::AppState;
+
 use crate::artwork::ArtworkManager;
 use crate::audio::{AudioPlayer, AudioStreamer};
 use crate::download::DownloadManager;
@@ -20,8 +23,6 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-
-pub use state::AppState;
 
 pub struct App {
     state: AppState,
@@ -59,6 +60,9 @@ impl App {
         // Load artwork cache from disk
         artwork_manager.load_cache_from_disk().await?;
 
+        // Create event bus
+        let event_bus = Arc::new(EventBus::new());
+
         // Create application state
         let state = AppState::new(
             config,
@@ -70,6 +74,7 @@ impl App {
             feed_refresher,
             podcast_search,
             artwork_manager,
+            event_bus,
         );
 
         // Create UI
