@@ -1,6 +1,7 @@
 pub mod events;
 pub mod state;
 
+use crate::artwork::ArtworkManager;
 use crate::audio::{AudioPlayer, AudioStreamer};
 use crate::download::DownloadManager;
 use crate::feed::{FeedRefresher, OpmlExporter, OpmlImporter, PodcastSearch};
@@ -52,6 +53,12 @@ impl App {
         ));
         let podcast_search = Arc::new(PodcastSearch::new());
 
+        // Initialize artwork manager
+        let artwork_manager = Arc::new(ArtworkManager::new(config.artwork_dir.clone()));
+
+        // Load artwork cache from disk
+        artwork_manager.load_cache_from_disk().await?;
+
         // Create application state
         let state = AppState::new(
             config,
@@ -62,6 +69,7 @@ impl App {
             download_manager,
             feed_refresher,
             podcast_search,
+            artwork_manager,
         );
 
         // Create UI
