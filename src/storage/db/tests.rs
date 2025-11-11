@@ -1,6 +1,9 @@
 use super::*;
+use crate::models::{DownloadStatus, Episode, PlaybackStatus, QueueItem, Subscription};
+use chrono::Utc;
 use std::path::PathBuf;
 use tempfile::TempDir;
+use uuid::Uuid;
 
 async fn create_test_db() -> (Database, TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
