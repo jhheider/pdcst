@@ -19,6 +19,14 @@ pub enum View {
     Settings,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Modal {
+    None,
+    Help,
+    Error(String),
+    Confirm { message: String, action: String },
+}
+
 pub struct AppState {
     pub config: Config,
     pub db: Arc<Database>,
@@ -33,12 +41,19 @@ pub struct AppState {
     // UI state
     pub current_view: View,
     pub selected_index: usize,
+    pub scroll_offset: usize,
+    pub modal: Modal,
+    pub search_input: String,
+    pub search_cursor: usize,
+    pub status_message: Option<String>,
+    pub show_help: bool,
 
     // Data
     pub subscriptions: Vec<Subscription>,
     pub episodes: Vec<Episode>,
     pub current_subscription: Option<Subscription>,
     pub search_results: Vec<SearchResult>,
+    pub queue_items: Vec<Episode>,  // Cached queue items
 
     // Playback state
     pub is_playing: bool,
@@ -154,10 +169,17 @@ impl AppState {
             artwork_manager,
             current_view: View::Subscriptions,
             selected_index: 0,
+            scroll_offset: 0,
+            modal: Modal::None,
+            search_input: String::new(),
+            search_cursor: 0,
+            status_message: None,
+            show_help: false,
             subscriptions: Vec::new(),
             episodes: Vec::new(),
             current_subscription: None,
             search_results: Vec::new(),
+            queue_items: Vec::new(),
             is_playing: false,
             current_episode: None,
             playback_position: 0.0,
@@ -552,6 +574,64 @@ impl AppState {
             self.set_view(View::Subscriptions);
         }
         tracing::debug!("Exited search mode");
+    }
+
+    // Modal and notification methods
+
+    pub fn show_help_modal(&mut self) {
+        self.modal = Modal::Help;
+    }
+
+    pub fn show_error(&mut self, message: String) {
+        self.modal = Modal::Error(message);
+    }
+
+    pub fn close_modal(&mut self) {
+        self.modal = Modal::None;
+    }
+
+    pub fn set_status(&mut self, message: String) {
+        self.status_message = Some(message);
+    }
+
+    pub fn clear_status(&mut self) {
+        self.status_message = None;
+    }
+
+    // Search input methods
+
+    pub fn append_search_char(&mut self, c: char) {
+        self.search_input.insert(self.search_cursor, c);
+        self.search_cursor += 1;
+    }
+
+    pub fn delete_search_char(&mut self) {
+        if self.search_cursor > 0 && !self.search_input.is_empty() {
+            self.search_cursor -= 1;
+            self.search_input.remove(self.search_cursor);
+        }
+    }
+
+    pub fn clear_search_input(&mut self) {
+        self.search_input.clear();
+        self.search_cursor = 0;
+    }
+
+    // Queue management
+
+    pub async fn load_queue(&mut self) -> Result<()> {
+        // Load queue items from database
+        let queue_data = self.db.get_queue().await?;
+        let mut episodes = Vec::new();
+
+        for item in queue_data {
+            if let Some(episode) = self.db.get_episode(item.episode_id).await? {
+                episodes.push(episode);
+            }
+        }
+
+        self.queue_items = episodes;
+        Ok(())
     }
 
     /// Download an episode
