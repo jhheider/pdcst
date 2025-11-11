@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -20,14 +21,18 @@ impl ArtworkProtocol {
             Self::None => "none",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl FromStr for ArtworkProtocol {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "sixel" => Self::Sixel,
             "kitty" => Self::Kitty,
             "iterm2" => Self::ITerm2,
             _ => Self::None,
-        }
+        })
     }
 }
 

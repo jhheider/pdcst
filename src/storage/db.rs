@@ -1,6 +1,5 @@
 use crate::models::{
-    DownloadStatus, Episode, PlaybackStatus, QueueItem, QueuePriority, Subscription,
-    SubscriptionPriority,
+    DownloadStatus, Episode, PlaybackStatus, QueueItem, Subscription,
 };
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -109,7 +108,7 @@ impl Database {
                 artwork_path: artwork_path.map(|p| p.into()),
                 categories,
                 auto_queue: row.try_get("auto_queue")?,
-                priority: SubscriptionPriority::from_str(&row.try_get::<String, _>("priority")?),
+                priority: row.try_get::<String, _>("priority")?.parse().unwrap(),
                 auto_download: row.try_get("auto_download")?,
                 last_refreshed: row.try_get("last_refreshed")?,
                 created_at: row.try_get("created_at")?,
@@ -150,7 +149,7 @@ impl Database {
                 artwork_path: artwork_path.map(|p| p.into()),
                 categories,
                 auto_queue: row.try_get("auto_queue")?,
-                priority: SubscriptionPriority::from_str(&row.try_get::<String, _>("priority")?),
+                priority: row.try_get::<String, _>("priority")?.parse().unwrap(),
                 auto_download: row.try_get("auto_download")?,
                 last_refreshed: row.try_get("last_refreshed")?,
                 created_at: row.try_get("created_at")?,
@@ -314,9 +313,10 @@ impl Database {
                 duration_seconds: row.try_get("duration_seconds")?,
                 file_size_bytes: row.try_get("file_size_bytes")?,
                 file_type: row.try_get("file_type")?,
-                download_status: DownloadStatus::from_str(
-                    &row.try_get::<String, _>("download_status")?,
-                ),
+                download_status: row
+                    .try_get::<String, _>("download_status")?
+                    .parse()
+                    .unwrap(),
                 local_path: local_path.map(|p| p.into()),
                 playback_position_seconds: row.try_get("playback_position_seconds")?,
                 played: row.try_get("played")?,
@@ -355,7 +355,7 @@ impl Database {
                 id: Uuid::parse_str(&row.try_get::<String, _>("id")?)?,
                 episode_id: Uuid::parse_str(&row.try_get::<String, _>("episode_id")?)?,
                 position: row.try_get("position")?,
-                priority: QueuePriority::from_str(&row.try_get::<String, _>("priority")?),
+                priority: row.try_get::<String, _>("priority")?.parse().unwrap(),
                 added_at: row.try_get("added_at")?,
             });
         }
@@ -422,7 +422,7 @@ impl Database {
             position_seconds: row.try_get("position_seconds")?,
             playback_rate: row.try_get("playback_rate")?,
             volume: row.try_get("volume")?,
-            status: PlaybackStatus::from_str(&row.try_get::<String, _>("status")?),
+            status: row.try_get::<String, _>("status")?.parse().unwrap(),
         })
     }
 

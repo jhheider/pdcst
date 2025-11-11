@@ -238,7 +238,7 @@ impl AudioPlayer {
 
     /// Set playback speed (1.0 = normal, 2.0 = double speed)
     pub async fn set_speed(&self, speed: f32) {
-        let clamped_speed = speed.max(0.1).min(4.0);
+        let clamped_speed = speed.clamp(0.1, 4.0);
         {
             let mut s = self.state.speed.lock().unwrap();
             *s = clamped_speed;

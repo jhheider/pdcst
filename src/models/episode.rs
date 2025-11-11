@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::str::FromStr;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -21,14 +22,18 @@ impl DownloadStatus {
             Self::Failed => "Failed",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
-        match s {
+impl FromStr for DownloadStatus {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
             "Downloading" => Self::Downloading,
             "Downloaded" => Self::Downloaded,
             "Failed" => Self::Failed,
             _ => Self::NotDownloaded,
-        }
+        })
     }
 }
 
@@ -48,13 +53,17 @@ impl PlaybackStatus {
             Self::Stopped => "Stopped",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
-        match s {
+impl FromStr for PlaybackStatus {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
             "Playing" => Self::Playing,
             "Paused" => Self::Paused,
             _ => Self::Stopped,
-        }
+        })
     }
 }
 
@@ -144,18 +153,18 @@ mod tests {
 
     #[test]
     fn test_download_status_conversions() {
-        assert_eq!(DownloadStatus::from_str("Downloaded"), DownloadStatus::Downloaded);
-        assert_eq!(DownloadStatus::from_str("Downloading"), DownloadStatus::Downloading);
-        assert_eq!(DownloadStatus::from_str("Failed"), DownloadStatus::Failed);
-        assert_eq!(DownloadStatus::from_str("Unknown"), DownloadStatus::NotDownloaded);
+        assert_eq!("Downloaded".parse::<DownloadStatus>().unwrap(), DownloadStatus::Downloaded);
+        assert_eq!("Downloading".parse::<DownloadStatus>().unwrap(), DownloadStatus::Downloading);
+        assert_eq!("Failed".parse::<DownloadStatus>().unwrap(), DownloadStatus::Failed);
+        assert_eq!("Unknown".parse::<DownloadStatus>().unwrap(), DownloadStatus::NotDownloaded);
     }
 
     #[test]
     fn test_playback_status_conversions() {
-        assert_eq!(PlaybackStatus::from_str("Playing"), PlaybackStatus::Playing);
-        assert_eq!(PlaybackStatus::from_str("Paused"), PlaybackStatus::Paused);
-        assert_eq!(PlaybackStatus::from_str("Stopped"), PlaybackStatus::Stopped);
-        assert_eq!(PlaybackStatus::from_str("Unknown"), PlaybackStatus::Stopped);
+        assert_eq!("Playing".parse::<PlaybackStatus>().unwrap(), PlaybackStatus::Playing);
+        assert_eq!("Paused".parse::<PlaybackStatus>().unwrap(), PlaybackStatus::Paused);
+        assert_eq!("Stopped".parse::<PlaybackStatus>().unwrap(), PlaybackStatus::Stopped);
+        assert_eq!("Unknown".parse::<PlaybackStatus>().unwrap(), PlaybackStatus::Stopped);
     }
 
     #[test]
