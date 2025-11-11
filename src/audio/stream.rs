@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use bytes::Bytes;
 use futures::StreamExt;
 use reqwest::Client;
 use std::sync::Arc;

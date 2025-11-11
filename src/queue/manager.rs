@@ -44,7 +44,7 @@ impl QueueManager {
     pub async fn move_up(&self, episode_id: Uuid) -> Result<()> {
         let queue = self.db.get_queue().await?;
 
-        if let Some((index, item)) = queue
+        if let Some((index, _item)) = queue
             .iter()
             .enumerate()
             .find(|(_, item)| item.episode_id == episode_id)
@@ -61,7 +61,7 @@ impl QueueManager {
     pub async fn move_down(&self, episode_id: Uuid) -> Result<()> {
         let queue = self.db.get_queue().await?;
 
-        if let Some((index, item)) = queue
+        if let Some((index, _item)) = queue
             .iter()
             .enumerate()
             .find(|(_, item)| item.episode_id == episode_id)

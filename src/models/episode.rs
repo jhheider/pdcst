@@ -137,3 +137,112 @@ impl Episode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_download_status_conversions() {
+        assert_eq!(DownloadStatus::from_str("Downloaded"), DownloadStatus::Downloaded);
+        assert_eq!(DownloadStatus::from_str("Downloading"), DownloadStatus::Downloading);
+        assert_eq!(DownloadStatus::from_str("Failed"), DownloadStatus::Failed);
+        assert_eq!(DownloadStatus::from_str("Unknown"), DownloadStatus::NotDownloaded);
+    }
+
+    #[test]
+    fn test_playback_status_conversions() {
+        assert_eq!(PlaybackStatus::from_str("Playing"), PlaybackStatus::Playing);
+        assert_eq!(PlaybackStatus::from_str("Paused"), PlaybackStatus::Paused);
+        assert_eq!(PlaybackStatus::from_str("Stopped"), PlaybackStatus::Stopped);
+        assert_eq!(PlaybackStatus::from_str("Unknown"), PlaybackStatus::Stopped);
+    }
+
+    #[test]
+    fn test_episode_creation() {
+        let sub_id = Uuid::new_v4();
+        let episode = Episode::new(
+            sub_id,
+            "Test Episode".to_string(),
+            "https://example.com/episode.mp3".to_string(),
+            "guid123".to_string(),
+            Utc::now(),
+        );
+
+        assert_eq!(episode.subscription_id, sub_id);
+        assert_eq!(episode.title, "Test Episode");
+        assert_eq!(episode.download_status, DownloadStatus::NotDownloaded);
+        assert!(!episode.played);
+        assert_eq!(episode.playback_position_seconds, 0);
+    }
+
+    #[test]
+    fn test_duration_formatting() {
+        let sub_id = Uuid::new_v4();
+        let mut episode = Episode::new(
+            sub_id,
+            "Test".to_string(),
+            "url".to_string(),
+            "guid".to_string(),
+            Utc::now(),
+        );
+
+        // Test hours and minutes
+        episode.duration_seconds = Some(3665); // 1h 1m 5s
+        assert_eq!(episode.duration_formatted(), "1h 1m");
+
+        // Test minutes only
+        episode.duration_seconds = Some(125); // 2m 5s
+        assert_eq!(episode.duration_formatted(), "2m");
+
+        // Test unknown
+        episode.duration_seconds = None;
+        assert_eq!(episode.duration_formatted(), "Unknown");
+    }
+
+    #[test]
+    fn test_progress_percentage() {
+        let sub_id = Uuid::new_v4();
+        let mut episode = Episode::new(
+            sub_id,
+            "Test".to_string(),
+            "url".to_string(),
+            "guid".to_string(),
+            Utc::now(),
+        );
+
+        episode.duration_seconds = Some(100);
+        episode.playback_position_seconds = 50;
+        assert_eq!(episode.progress_percentage(), 50.0);
+
+        episode.playback_position_seconds = 0;
+        assert_eq!(episode.progress_percentage(), 0.0);
+
+        episode.playback_position_seconds = 100;
+        assert_eq!(episode.progress_percentage(), 100.0);
+
+        // Test with no duration
+        episode.duration_seconds = None;
+        assert_eq!(episode.progress_percentage(), 0.0);
+    }
+
+    #[test]
+    fn test_is_downloaded() {
+        let sub_id = Uuid::new_v4();
+        let mut episode = Episode::new(
+            sub_id,
+            "Test".to_string(),
+            "url".to_string(),
+            "guid".to_string(),
+            Utc::now(),
+        );
+
+        assert!(!episode.is_downloaded());
+
+        episode.download_status = DownloadStatus::Downloaded;
+        assert!(episode.is_downloaded());
+
+        episode.download_status = DownloadStatus::Downloading;
+        assert!(!episode.is_downloaded());
+    }
+}

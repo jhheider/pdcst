@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{RwLock, Semaphore};
-use uuid::Uuid;
+use tokio::sync::Semaphore;
 
 pub struct DownloadManager {
     client: Client,

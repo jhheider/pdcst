@@ -1,9 +1,9 @@
 use crate::models::{
-    Config, DownloadStatus, Episode, PlaybackStatus, QueueItem, QueuePriority, Subscription,
+    DownloadStatus, Episode, PlaybackStatus, QueueItem, QueuePriority, Subscription,
     SubscriptionPriority,
 };
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::Row;
 use std::path::Path;
