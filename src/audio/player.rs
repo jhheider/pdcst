@@ -579,4 +579,229 @@ mod tests {
         let speed = player.get_speed().await;
         assert!(speed <= 4.0, "Speed should be clamped to 4.0, got {}", speed);
     }
+
+    #[tokio::test]
+    async fn test_pause_sets_state() {
+        let player = AudioPlayer::new().unwrap();
+
+        player.pause().await;
+
+        assert!(player.is_paused().await);
+        assert!(!player.is_playing().await);
+    }
+
+    #[tokio::test]
+    async fn test_play_sets_state() {
+        let player = AudioPlayer::new().unwrap();
+
+        // Set paused state first
+        player.pause().await;
+        assert!(player.is_paused().await);
+
+        // Resume playback
+        player.play().await;
+
+        // Note: Without actual audio, is_playing may not be true
+        // but is_paused should be false
+        assert!(!player.is_paused().await);
+    }
+
+    #[tokio::test]
+    async fn test_stop_resets_state() {
+        let player = AudioPlayer::new().unwrap();
+
+        player.stop().await;
+
+        assert!(!player.is_playing().await);
+        assert!(!player.is_paused().await);
+        assert!(player.is_stopped().await);
+        assert_eq!(player.get_position().await, 0.0);
+        assert_eq!(player.get_current_episode().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_seek_forward_with_operation_lock() {
+        let player = AudioPlayer::new().unwrap();
+
+        let result = player.seek_forward(Duration::from_secs(30)).await;
+
+        // Should succeed even without audio loaded
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_seek_backward_with_operation_lock() {
+        let player = AudioPlayer::new().unwrap();
+
+        let result = player.seek_backward(Duration::from_secs(10)).await;
+
+        // Should succeed even without audio loaded
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_seek_to_specific_position() {
+        let player = AudioPlayer::new().unwrap();
+
+        let target = Duration::from_secs(100);
+        let result = player.seek_to(target).await;
+
+        // Should succeed even without audio loaded
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_current_episode_initially_none() {
+        let player = AudioPlayer::new().unwrap();
+
+        assert_eq!(player.get_current_episode().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_volume_persists_across_calls() {
+        let player = AudioPlayer::new().unwrap();
+
+        player.set_volume(0.3).await;
+        assert_eq!(player.get_volume().await, 0.3);
+
+        player.set_volume(0.7).await;
+        assert_eq!(player.get_volume().await, 0.7);
+    }
+
+    #[tokio::test]
+    async fn test_speed_persists_across_calls() {
+        let player = AudioPlayer::new().unwrap();
+
+        player.set_speed(1.5).await;
+        assert_eq!(player.get_speed().await, 1.5);
+
+        player.set_speed(2.0).await;
+        assert_eq!(player.get_speed().await, 2.0);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_volume_changes() {
+        let player = Arc::new(AudioPlayer::new().unwrap());
+
+        let mut handles = vec![];
+
+        // Spawn 10 concurrent volume changes
+        for i in 0..10 {
+            let p = player.clone();
+            let handle = tokio::spawn(async move {
+                let vol = (i as f32) * 0.1;
+                p.set_volume(vol).await;
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all to complete
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Should have some valid volume (no panics)
+        let final_vol = player.get_volume().await;
+        assert!(final_vol >= 0.0 && final_vol <= 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_speed_changes() {
+        let player = Arc::new(AudioPlayer::new().unwrap());
+
+        let mut handles = vec![];
+
+        // Spawn 10 concurrent speed changes
+        for i in 1..=10 {
+            let p = player.clone();
+            let handle = tokio::spawn(async move {
+                let speed = i as f32 * 0.5;
+                p.set_speed(speed).await;
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all to complete
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Should have some valid speed (no panics)
+        let final_speed = player.get_speed().await;
+        assert!(final_speed > 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_seeks() {
+        let player = Arc::new(AudioPlayer::new().unwrap());
+
+        let mut handles = vec![];
+
+        // Spawn 5 concurrent seeks
+        for i in 0..5 {
+            let p = player.clone();
+            let handle = tokio::spawn(async move {
+                let pos = Duration::from_secs(i * 10);
+                let _ = p.seek_to(pos).await;
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all to complete - should not deadlock
+        let timeout = tokio::time::timeout(
+            Duration::from_secs(5),
+            futures::future::join_all(handles)
+        ).await;
+
+        assert!(timeout.is_ok(), "Concurrent seeks deadlocked");
+    }
+
+    #[tokio::test]
+    async fn test_mixed_concurrent_operations() {
+        let player = Arc::new(AudioPlayer::new().unwrap());
+
+        let mut handles = vec![];
+
+        // Mix of different operations
+        for i in 0..20 {
+            let p = player.clone();
+            let handle = tokio::spawn(async move {
+                match i % 5 {
+                    0 => p.set_volume(0.5).await,
+                    1 => p.set_speed(1.5).await,
+                    2 => { p.pause().await; },
+                    3 => { p.play().await; },
+                    _ => { let _ = p.seek_forward(Duration::from_secs(5)).await; },
+                }
+            });
+            handles.push(handle);
+        }
+
+        // All should complete without deadlock
+        let timeout = tokio::time::timeout(
+            Duration::from_secs(5),
+            futures::future::join_all(handles)
+        ).await;
+
+        assert!(timeout.is_ok(), "Mixed operations deadlocked");
+    }
+
+    #[tokio::test]
+    async fn test_is_stopped_after_creation() {
+        let player = AudioPlayer::new().unwrap();
+
+        assert!(player.is_stopped().await);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_players_independent() {
+        let player1 = AudioPlayer::new().unwrap();
+        let player2 = AudioPlayer::new().unwrap();
+
+        player1.set_volume(0.3).await;
+        player2.set_volume(0.7).await;
+
+        assert_eq!(player1.get_volume().await, 0.3);
+        assert_eq!(player2.get_volume().await, 0.7);
+    }
 }
