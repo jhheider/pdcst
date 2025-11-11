@@ -432,6 +432,10 @@ fn handle_command(
                 tracing::debug!("Audio thread: Seeking to {:?}", position);
 
                 // Get audio buffer
+                // Note: This clones the buffer (~60MB for typical episode).
+                // Performance: skip_duration() is O(n) but provides ±1s accuracy,
+                // which is acceptable for podcast playback.
+                // Future optimization: Use symphonia for frame-accurate O(1) seeking if needed.
                 let buffer_opt = state.audio_buffer.lock().unwrap().clone();
 
                 if let Some(data) = buffer_opt {
