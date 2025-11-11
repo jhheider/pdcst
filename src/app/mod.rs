@@ -3,7 +3,7 @@ pub mod state;
 
 use crate::audio::{AudioPlayer, AudioStreamer};
 use crate::download::DownloadManager;
-use crate::feed::{FeedRefresher, OpmlExporter, OpmlImporter};
+use crate::feed::{FeedRefresher, OpmlExporter, OpmlImporter, PodcastSearch};
 use crate::models::Config;
 use crate::queue::QueueManager;
 use crate::storage::Database;
@@ -50,6 +50,7 @@ impl App {
             config.max_concurrent_refreshes,
             db.clone(),
         ));
+        let podcast_search = Arc::new(PodcastSearch::new());
 
         // Create application state
         let state = AppState::new(
@@ -60,6 +61,7 @@ impl App {
             queue_manager,
             download_manager,
             feed_refresher,
+            podcast_search,
         );
 
         // Create UI

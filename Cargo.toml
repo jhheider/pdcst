@@ -54,6 +54,7 @@ dirs = "5.0"
 url = "2.5"
 bytes = "1.9"
 futures = "0.3"
+urlencoding = "2.1"
 
 # CLI
 clap = { version = "4", features = ["derive"] }

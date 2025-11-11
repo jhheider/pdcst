@@ -1,6 +1,6 @@
 use crate::audio::{AudioPlayer, AudioStreamer};
 use crate::download::DownloadManager;
-use crate::feed::FeedRefresher;
+use crate::feed::{FeedRefresher, PodcastSearch, SearchResult};
 use crate::models::Config;
 use crate::models::{Episode, Subscription};
 use crate::queue::QueueManager;
@@ -26,6 +26,7 @@ pub struct AppState {
     pub queue_manager: Arc<QueueManager>,
     pub download_manager: Arc<DownloadManager>,
     pub feed_refresher: Arc<FeedRefresher>,
+    pub podcast_search: Arc<PodcastSearch>,
 
     // UI state
     pub current_view: View,
@@ -35,6 +36,7 @@ pub struct AppState {
     pub subscriptions: Vec<Subscription>,
     pub episodes: Vec<Episode>,
     pub current_subscription: Option<Subscription>,
+    pub search_results: Vec<SearchResult>,
 
     // Playback state
     pub is_playing: bool,
@@ -53,6 +55,7 @@ impl AppState {
         queue_manager: Arc<QueueManager>,
         download_manager: Arc<DownloadManager>,
         feed_refresher: Arc<FeedRefresher>,
+        podcast_search: Arc<PodcastSearch>,
     ) -> Self {
         // Set up queue auto-advance
         if let Some(mut completion_rx) = audio_player.take_completion_rx() {
@@ -144,11 +147,13 @@ impl AppState {
             queue_manager,
             download_manager,
             feed_refresher,
+            podcast_search,
             current_view: View::Subscriptions,
             selected_index: 0,
             subscriptions: Vec::new(),
             episodes: Vec::new(),
             current_subscription: None,
+            search_results: Vec::new(),
             is_playing: false,
             current_episode: None,
             playback_position: 0.0,
@@ -278,6 +283,42 @@ impl AppState {
         self.is_playing = true;
 
         tracing::info!("Playback started successfully for: {}", episode.title);
+        Ok(())
+    }
+
+    /// Search for podcasts using the iTunes Search API
+    ///
+    /// Updates `self.search_results` with the results.
+    pub async fn search_podcasts(&mut self, query: &str) -> Result<()> {
+        tracing::info!("Searching for podcasts: {}", query);
+
+        let results = self.podcast_search.search(query).await?;
+
+        tracing::info!("Found {} results", results.len());
+        self.search_results = results;
+
+        Ok(())
+    }
+
+    /// Subscribe to a podcast from a search result
+    ///
+    /// Creates a new subscription from the search result and adds it to the database.
+    pub async fn subscribe_from_search_result(&mut self, result: &SearchResult) -> Result<()> {
+        tracing::info!("Subscribing to: {}", result.title);
+
+        // Create subscription from search result
+        let mut subscription = Subscription::new(result.title.clone(), result.feed_url.clone());
+        subscription.author = Some(result.artist.clone());
+        subscription.artwork_url = result.artwork_url.clone();
+        subscription.description = result.description.clone();
+
+        // Insert into database
+        self.db.insert_subscription(&subscription).await?;
+
+        // Reload subscriptions
+        self.load_subscriptions().await?;
+
+        tracing::info!("Successfully subscribed to: {}", result.title);
         Ok(())
     }
 }
