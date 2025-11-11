@@ -372,7 +372,7 @@ fn handle_command(
                 match Decoder::new(Cursor::new(data.as_ref().clone())) {
                     Ok(source) => {
                         // Create new sink
-                        match Sink::try_new(&stream_handle) {
+                        match Sink::try_new(stream_handle) {
                             Ok(new_sink) => {
                                 new_sink.append(source);
 
@@ -406,7 +406,7 @@ fn handle_command(
 
                     // Update start position for accurate resume
                     if let Some(start_time) = *playback_start_time {
-                        *start_position = *start_position + start_time.elapsed();
+                        *start_position += start_time.elapsed();
                     }
                     *playback_start_time = None;
                 }
@@ -451,7 +451,7 @@ fn handle_command(
                         Ok(source) => {
                             let source = source.skip_duration(position);
 
-                            match Sink::try_new(&stream_handle) {
+                            match Sink::try_new(stream_handle) {
                                 Ok(new_sink) => {
                                     new_sink.append(source);
 

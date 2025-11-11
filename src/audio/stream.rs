@@ -103,7 +103,7 @@ impl AudioStreamer {
             // Update progress atomically (lock-free, ~7,500x for 60MB file)
             state.bytes_loaded.store(total_bytes, Ordering::Relaxed);
 
-            if total_bytes % 1_000_000 == 0 {
+            if total_bytes.is_multiple_of(1_000_000) {
                 // Log every 1MB to reduce noise
                 tracing::debug!(
                     "Streamed {} bytes ({:.1}%)",

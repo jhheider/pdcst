@@ -3,6 +3,7 @@ pub mod artwork;
 pub mod audio;
 pub mod config;
 pub mod download;
+pub mod error;
 pub mod feed;
 pub mod models;
 pub mod queue;
@@ -12,4 +13,5 @@ pub mod ui;
 pub mod utils;
 
 pub use app::App;
+pub use error::{PodcastError, Result};
 pub use models::Config;
