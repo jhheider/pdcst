@@ -123,21 +123,22 @@ impl AudioStreamer {
             .with_context(|| format!("Failed to read audio file: {}", path.display()))?;
 
         let mut state = StreamState::new(episode_id);
-        state.content_length = Some(data.len() as u64);
+        let file_size = data.len() as u64;
+        state.content_length = Some(file_size);
 
         let mut buffer = state.buffer.write().await;
         *buffer = data;
         drop(buffer);
 
         let mut bytes_loaded = state.bytes_loaded.write().await;
-        *bytes_loaded = state.content_length.unwrap();
+        *bytes_loaded = file_size;
         drop(bytes_loaded);
 
         let mut complete = state.complete.write().await;
         *complete = true;
         drop(complete);
 
-        tracing::info!("Loaded {} bytes from file", state.content_length.unwrap());
+        tracing::info!("Loaded {} bytes from file", file_size);
         Ok(state)
     }
 }

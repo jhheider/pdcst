@@ -31,7 +31,10 @@ impl FeedRefresher {
                 let db = self.db.clone();
 
                 tokio::spawn(async move {
-                    let _permit = semaphore.acquire().await.unwrap();
+                    let _permit = semaphore
+                        .acquire()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Semaphore closed: {}", e))?;
                     Self::refresh_feed(fetcher, db, sub).await
                 })
             })

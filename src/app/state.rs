@@ -1,4 +1,4 @@
-use crate::audio::AudioPlayer;
+use crate::audio::{AudioPlayer, AudioStreamer};
 use crate::download::DownloadManager;
 use crate::feed::FeedRefresher;
 use crate::models::Config;
@@ -6,6 +6,7 @@ use crate::models::{Episode, Subscription};
 use crate::queue::QueueManager;
 use crate::storage::Database;
 use anyhow::Result;
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,6 +22,7 @@ pub struct AppState {
     pub config: Config,
     pub db: Arc<Database>,
     pub audio_player: Arc<AudioPlayer>,
+    pub audio_streamer: Arc<AudioStreamer>,
     pub queue_manager: Arc<QueueManager>,
     pub download_manager: Arc<DownloadManager>,
     pub feed_refresher: Arc<FeedRefresher>,
@@ -47,6 +49,7 @@ impl AppState {
         config: Config,
         db: Arc<Database>,
         audio_player: Arc<AudioPlayer>,
+        audio_streamer: Arc<AudioStreamer>,
         queue_manager: Arc<QueueManager>,
         download_manager: Arc<DownloadManager>,
         feed_refresher: Arc<FeedRefresher>,
@@ -55,6 +58,7 @@ impl AppState {
             config,
             db,
             audio_player,
+            audio_streamer,
             queue_manager,
             download_manager,
             feed_refresher,
@@ -158,10 +162,40 @@ impl AppState {
     async fn play_episode(&mut self, episode: Episode) -> Result<()> {
         tracing::info!("Playing episode: {}", episode.title);
 
-        // TODO: Stream or load the episode audio
-        // For now, just set it as current
-        self.current_episode = Some(episode);
+        // 1. Load audio data (from file or stream)
+        let audio_data = if episode.is_downloaded() {
+            // Load from local file
+            let path = episode
+                .local_path
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Downloaded episode missing local_path"))?;
 
+            tracing::debug!("Loading audio from file: {}", path.display());
+            let state = self
+                .audio_streamer
+                .load_from_file(episode.id, Path::new(path))
+                .await?;
+            state.get_buffer().await
+        } else {
+            // Stream from URL
+            tracing::debug!("Streaming audio from URL: {}", episode.url);
+            let state = self
+                .audio_streamer
+                .stream_episode(episode.id, &episode.url)
+                .await?;
+            state.get_buffer().await
+        };
+
+        // 2. Play through audio player
+        self.audio_player
+            .play_from_memory(episode.id, &audio_data)
+            .await?;
+
+        // 3. Update app state
+        self.current_episode = Some(episode.clone());
+        self.is_playing = true;
+
+        tracing::info!("Playback started successfully for: {}", episode.title);
         Ok(())
     }
 }

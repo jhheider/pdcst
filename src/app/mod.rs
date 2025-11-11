@@ -1,7 +1,7 @@
 pub mod events;
 pub mod state;
 
-use crate::audio::AudioPlayer;
+use crate::audio::{AudioPlayer, AudioStreamer};
 use crate::download::DownloadManager;
 use crate::feed::FeedRefresher;
 use crate::models::Config;
@@ -34,8 +34,9 @@ impl App {
         let db_path = config.database_path();
         let db = Arc::new(Database::new(&db_path).await?);
 
-        // Initialize audio player
+        // Initialize audio player and streamer
         let audio_player = Arc::new(AudioPlayer::new()?);
+        let audio_streamer = Arc::new(AudioStreamer::new());
 
         // Initialize managers
         let queue_manager = Arc::new(QueueManager::new(db.clone()));
@@ -54,6 +55,7 @@ impl App {
             config,
             db,
             audio_player,
+            audio_streamer,
             queue_manager,
             download_manager,
             feed_refresher,
