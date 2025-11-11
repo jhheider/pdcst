@@ -805,3 +805,136 @@ mod tests {
         assert_eq!(player2.get_volume().await, 0.7);
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn prop_volume_always_clamped(vol in -1000.0f32..1000.0f32) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let player = AudioPlayer::new().unwrap();
+                player.set_volume(vol).await;
+                let actual = player.get_volume().await;
+                prop_assert!(actual >= 0.0 && actual <= 1.0,
+                    "Volume {} should be clamped to [0.0, 1.0], got {}",
+                    vol, actual);
+                Ok(())
+            })?;
+        }
+
+        #[test]
+        fn prop_speed_always_positive(speed in -100.0f32..100.0f32) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let player = AudioPlayer::new().unwrap();
+                player.set_speed(speed).await;
+                let actual = player.get_speed().await;
+                prop_assert!(actual > 0.0,
+                    "Speed {} should always be positive, got {}",
+                    speed, actual);
+                Ok(())
+            })?;
+        }
+
+        #[test]
+        fn prop_speed_within_bounds(speed in -100.0f32..100.0f32) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let player = AudioPlayer::new().unwrap();
+                player.set_speed(speed).await;
+                let actual = player.get_speed().await;
+                prop_assert!(actual >= 0.1 && actual <= 4.0,
+                    "Speed {} should be clamped to [0.1, 4.0], got {}",
+                    speed, actual);
+                Ok(())
+            })?;
+        }
+
+        #[test]
+        fn prop_seek_backward_never_negative(seek_back_secs in 0u64..10000) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let player = AudioPlayer::new().unwrap();
+
+                player.seek_backward(Duration::from_secs(seek_back_secs)).await.unwrap();
+                let pos = player.get_position().await;
+
+                prop_assert!(pos >= 0.0,
+                    "Position after seeking back {} seconds should not be negative, got {}",
+                    seek_back_secs, pos);
+                Ok(())
+            })?;
+        }
+
+        #[test]
+        fn prop_position_never_negative(operations in prop::collection::vec(0u8..5, 0..100)) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let player = AudioPlayer::new().unwrap();
+
+                // Perform random operations
+                for op in operations {
+                    match op {
+                        0 => { player.stop().await; },
+                        1 => { let _ = player.seek_forward(Duration::from_secs(10)).await; },
+                        2 => { let _ = player.seek_backward(Duration::from_secs(5)).await; },
+                        3 => { let _ = player.seek_to(Duration::from_secs(100)).await; },
+                        _ => { player.pause().await; },
+                    }
+
+                    let pos = player.get_position().await;
+                    prop_assert!(pos >= 0.0,
+                        "Position should never be negative after operation {}, got {}",
+                        op, pos);
+                }
+                Ok(())
+            })?;
+        }
+
+        #[test]
+        fn prop_volume_persistence(vol1 in 0.0f32..1.0f32, vol2 in 0.0f32..1.0f32) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let player = AudioPlayer::new().unwrap();
+
+                player.set_volume(vol1).await;
+                let retrieved1 = player.get_volume().await;
+                prop_assert!((retrieved1 - vol1).abs() < 0.001,
+                    "Volume {} should persist, got {}",
+                    vol1, retrieved1);
+
+                player.set_volume(vol2).await;
+                let retrieved2 = player.get_volume().await;
+                prop_assert!((retrieved2 - vol2).abs() < 0.001,
+                    "Volume {} should persist, got {}",
+                    vol2, retrieved2);
+                Ok(())
+            })?;
+        }
+
+        #[test]
+        fn prop_speed_persistence(speed1 in 0.1f32..4.0f32, speed2 in 0.1f32..4.0f32) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let player = AudioPlayer::new().unwrap();
+
+                player.set_speed(speed1).await;
+                let retrieved1 = player.get_speed().await;
+                prop_assert!((retrieved1 - speed1).abs() < 0.001,
+                    "Speed {} should persist, got {}",
+                    speed1, retrieved1);
+
+                player.set_speed(speed2).await;
+                let retrieved2 = player.get_speed().await;
+                prop_assert!((retrieved2 - speed2).abs() < 0.001,
+                    "Speed {} should persist, got {}",
+                    speed2, retrieved2);
+                Ok(())
+            })?;
+        }
+    }
+}
