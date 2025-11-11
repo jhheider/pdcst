@@ -92,6 +92,11 @@ pub struct AudioPlayer {
     state: Arc<AudioState>,
     /// Ensures operations like seek are atomic
     operation_lock: Arc<TokioMutex<()>>,
+    /// Channel for playback completion events (kept to maintain channel lifetime)
+    #[allow(dead_code)]
+    completion_tx: tokio::sync::mpsc::UnboundedSender<Uuid>,
+    /// Receiver for playback completion events (take once to set up callback)
+    completion_rx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Uuid>>>>,
 }
 
 impl AudioPlayer {
@@ -101,18 +106,29 @@ impl AudioPlayer {
     pub fn new() -> Result<Self> {
         let (tx, rx) = mpsc::channel();
         let state = Arc::new(AudioState::new());
+        let (completion_tx, completion_rx) = tokio::sync::mpsc::unbounded_channel();
 
         // Spawn dedicated audio thread
         let state_clone = state.clone();
+        let completion_tx_clone = completion_tx.clone();
         std::thread::spawn(move || {
-            audio_thread(rx, state_clone);
+            audio_thread(rx, state_clone, completion_tx_clone);
         });
 
         Ok(Self {
             command_tx: tx,
             state,
             operation_lock: Arc::new(TokioMutex::new(())),
+            completion_tx,
+            completion_rx: Arc::new(Mutex::new(Some(completion_rx))),
         })
+    }
+
+    /// Take the completion receiver to set up a callback for when episodes finish playing
+    ///
+    /// This can only be called once. Returns None if already taken.
+    pub fn take_completion_rx(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<Uuid>> {
+        self.completion_rx.lock().unwrap().take()
     }
 
     /// Play audio from memory buffer
@@ -294,7 +310,11 @@ impl Default for AudioPlayer {
 ///
 /// This runs in a dedicated std::thread (not tokio) because OutputStream
 /// and Sink are !Send and must stay on the same thread.
-fn audio_thread(rx: mpsc::Receiver<AudioCommand>, state: Arc<AudioState>) {
+fn audio_thread(
+    rx: mpsc::Receiver<AudioCommand>,
+    state: Arc<AudioState>,
+    completion_tx: tokio::sync::mpsc::UnboundedSender<Uuid>,
+) {
     // Create audio output stream - this stays on this thread
     let Ok((_stream, stream_handle)) = OutputStream::try_default() else {
         tracing::error!("Failed to create audio output stream");
@@ -304,12 +324,19 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, state: Arc<AudioState>) {
     let mut sink: Option<Sink> = None;
     let mut playback_start_time: Option<Instant> = None;
     let mut start_position = Duration::ZERO;
+    let mut current_playing_episode: Option<Uuid> = None;
 
     loop {
         // Use recv_timeout to periodically update position
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(cmd) => {
                 let should_shutdown = matches!(cmd, AudioCommand::Shutdown);
+
+                // Track episode ID when Play command is received
+                if let AudioCommand::Play { episode_id, .. } = &cmd {
+                    current_playing_episode = Some(*episode_id);
+                }
+
                 handle_command(
                     cmd,
                     &mut sink,
@@ -338,7 +365,14 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, state: Arc<AudioState>) {
                         state.set_playing(false);
                         state.set_paused(false);
                         playback_start_time = None;
-                        tracing::debug!("Playback completed");
+
+                        // Notify completion
+                        if let Some(episode_id) = current_playing_episode.take() {
+                            tracing::debug!("Playback completed for episode {}", episode_id);
+                            let _ = completion_tx.send(episode_id);
+                        } else {
+                            tracing::debug!("Playback completed");
+                        }
                     }
                 }
             }
