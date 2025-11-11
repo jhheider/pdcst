@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -9,8 +10,10 @@ pub struct StreamState {
     pub episode_id: uuid::Uuid,
     pub buffer: Arc<RwLock<Vec<u8>>>,
     pub content_length: Option<u64>,
-    pub bytes_loaded: Arc<RwLock<u64>>,
-    pub complete: Arc<RwLock<bool>>,
+    /// Lock-free progress tracking (updated on every chunk)
+    pub bytes_loaded: Arc<AtomicU64>,
+    /// Lock-free completion flag
+    pub complete: Arc<AtomicBool>,
 }
 
 impl StreamState {
@@ -19,8 +22,8 @@ impl StreamState {
             episode_id,
             buffer: Arc::new(RwLock::new(Vec::new())),
             content_length: None,
-            bytes_loaded: Arc::new(RwLock::new(0)),
-            complete: Arc::new(RwLock::new(false)),
+            bytes_loaded: Arc::new(AtomicU64::new(0)),
+            complete: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -28,17 +31,19 @@ impl StreamState {
         self.buffer.read().await.clone()
     }
 
+    /// Get progress percentage (0.0 - 100.0) - lock-free
     pub async fn get_progress(&self) -> f64 {
         if let Some(total) = self.content_length {
-            let loaded = *self.bytes_loaded.read().await;
+            let loaded = self.bytes_loaded.load(Ordering::Relaxed);
             (loaded as f64 / total as f64) * 100.0
         } else {
             0.0
         }
     }
 
+    /// Check if streaming is complete - lock-free
     pub async fn is_complete(&self) -> bool {
-        *self.complete.read().await
+        self.complete.load(Ordering::Relaxed)
     }
 }
 
@@ -58,6 +63,11 @@ impl AudioStreamer {
     }
 
     /// Stream episode audio into memory
+    ///
+    /// Performance optimizations:
+    /// - Pre-allocates buffer based on Content-Length
+    /// - Collects chunks locally without locks (15,000 → 1 lock for 60MB)
+    /// - Uses atomic progress tracking (lock-free)
     pub async fn stream_episode(&self, episode_id: uuid::Uuid, url: &str) -> Result<StreamState> {
         tracing::info!("Streaming episode from: {}", url);
 
@@ -76,35 +86,41 @@ impl AudioStreamer {
         let mut state = StreamState::new(episode_id);
         state.content_length = content_length;
 
+        // Pre-allocate buffer with known capacity (avoids reallocations)
+        let capacity = content_length.unwrap_or(50_000_000) as usize; // Default 50MB
+        let mut local_buffer = Vec::with_capacity(capacity);
+
         let mut stream = response.bytes_stream();
         let mut total_bytes = 0u64;
 
+        // Collect all chunks into local buffer (no locks during streaming)
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.context("Failed to read audio stream chunk")?;
 
             total_bytes += chunk.len() as u64;
+            local_buffer.extend_from_slice(&chunk);
 
-            // Append to buffer
-            let mut buffer = state.buffer.write().await;
-            buffer.extend_from_slice(&chunk);
-            drop(buffer);
+            // Update progress atomically (lock-free, ~7,500x for 60MB file)
+            state.bytes_loaded.store(total_bytes, Ordering::Relaxed);
 
-            // Update progress
-            let mut bytes_loaded = state.bytes_loaded.write().await;
-            *bytes_loaded = total_bytes;
-            drop(bytes_loaded);
-
-            tracing::debug!(
-                "Streamed {} bytes ({:.1}%)",
-                total_bytes,
-                state.get_progress().await
-            );
+            if total_bytes % 1_000_000 == 0 {
+                // Log every 1MB to reduce noise
+                tracing::debug!(
+                    "Streamed {} bytes ({:.1}%)",
+                    total_bytes,
+                    state.get_progress().await
+                );
+            }
         }
 
-        // Mark as complete
-        let mut complete = state.complete.write().await;
-        *complete = true;
-        drop(complete);
+        // Store final buffer (single lock acquisition)
+        {
+            let mut buffer = state.buffer.write().await;
+            *buffer = local_buffer;
+        }
+
+        // Mark as complete atomically (lock-free)
+        state.complete.store(true, Ordering::Release);
 
         tracing::info!("Streaming complete: {} bytes", total_bytes);
         Ok(state)
@@ -126,17 +142,17 @@ impl AudioStreamer {
         let file_size = data.len() as u64;
         state.content_length = Some(file_size);
 
-        let mut buffer = state.buffer.write().await;
-        *buffer = data;
-        drop(buffer);
+        // Store buffer (single lock)
+        {
+            let mut buffer = state.buffer.write().await;
+            *buffer = data;
+        }
 
-        let mut bytes_loaded = state.bytes_loaded.write().await;
-        *bytes_loaded = file_size;
-        drop(bytes_loaded);
+        // Update progress atomically (lock-free)
+        state.bytes_loaded.store(file_size, Ordering::Relaxed);
 
-        let mut complete = state.complete.write().await;
-        *complete = true;
-        drop(complete);
+        // Mark complete atomically (lock-free)
+        state.complete.store(true, Ordering::Release);
 
         tracing::info!("Loaded {} bytes from file", file_size);
         Ok(state)
