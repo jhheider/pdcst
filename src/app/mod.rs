@@ -133,10 +133,54 @@ impl App {
         use state::View;
 
         match key {
+            // Playback controls
             KeyCode::Char(' ') => {
                 // Play/pause
                 self.state.toggle_playback().await?;
             }
+            KeyCode::Char('n') => {
+                // Next episode (from queue)
+                self.state.play_next_in_queue().await?;
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') => {
+                // Previous episode (restart current)
+                self.state.restart_current_episode().await?;
+            }
+
+            // Volume controls
+            KeyCode::Char('+') | KeyCode::Char('=') => {
+                self.state.increase_volume(0.1).await?;
+            }
+            KeyCode::Char('-') | KeyCode::Char('_') => {
+                self.state.decrease_volume(0.1).await?;
+            }
+            KeyCode::Char('m') => {
+                self.state.toggle_mute().await?;
+            }
+
+            // Playback speed controls
+            KeyCode::Char('[') => {
+                self.state.decrease_speed(0.1).await?;
+            }
+            KeyCode::Char(']') => {
+                self.state.increase_speed(0.1).await?;
+            }
+
+            // Seeking
+            KeyCode::Left => {
+                self.state.seek_backward(10.0).await?;
+            }
+            KeyCode::Right => {
+                self.state.seek_forward(10.0).await?;
+            }
+            KeyCode::Char('<') => {
+                self.state.seek_backward(30.0).await?;
+            }
+            KeyCode::Char('>') => {
+                self.state.seek_forward(30.0).await?;
+            }
+
+            // View navigation
             KeyCode::Char('1') => {
                 self.state.set_view(View::Subscriptions);
             }
@@ -146,15 +190,67 @@ impl App {
             KeyCode::Char('3') => {
                 self.state.set_view(View::Search);
             }
-            KeyCode::Up => {
+            KeyCode::Char('4') => {
+                self.state.set_view(View::Settings);
+            }
+            KeyCode::Tab => {
+                self.state.next_view();
+            }
+            KeyCode::BackTab => {
+                self.state.previous_view();
+            }
+
+            // List navigation
+            KeyCode::Up | KeyCode::Char('k') => {
                 self.state.previous_item();
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 self.state.next_item();
             }
+            KeyCode::Char('g') => {
+                self.state.goto_top();
+            }
+            KeyCode::Char('G') => {
+                self.state.goto_bottom();
+            }
+            KeyCode::PageUp => {
+                self.state.page_up();
+            }
+            KeyCode::PageDown => {
+                self.state.page_down();
+            }
+
+            // Item selection and actions
             KeyCode::Enter => {
                 self.state.select_item().await?;
             }
+            KeyCode::Char('a') => {
+                self.state.add_selected_to_queue().await?;
+            }
+            KeyCode::Char('d') => {
+                self.state.download_selected_episode().await?;
+            }
+            KeyCode::Char('x') => {
+                self.state.delete_selected_download().await?;
+            }
+            KeyCode::Char('r') => {
+                self.state.refresh_selected_subscription().await?;
+            }
+            KeyCode::Char('R') => {
+                self.state.refresh_all_subscriptions().await?;
+            }
+            KeyCode::Char('s') => {
+                self.state.toggle_played_status().await?;
+            }
+
+            // Search
+            KeyCode::Char('/') => {
+                self.state.enter_search_mode();
+            }
+            KeyCode::Esc => {
+                self.state.exit_search_mode();
+            }
+
             _ => {}
         }
 

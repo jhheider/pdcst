@@ -321,4 +321,274 @@ impl AppState {
         tracing::info!("Successfully subscribed to: {}", result.title);
         Ok(())
     }
+
+    // Playback control methods
+
+    pub async fn play_next_in_queue(&mut self) -> Result<()> {
+        tracing::info!("Playing next episode in queue");
+
+        match self.queue_manager.get_next().await? {
+            Some(next_item) => {
+                if let Some(episode) = self.db.get_episode(next_item.episode_id).await? {
+                    self.play_episode(episode).await?;
+                }
+                Ok(())
+            }
+            None => {
+                tracing::info!("Queue is empty");
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn restart_current_episode(&mut self) -> Result<()> {
+        tracing::info!("Restarting current episode");
+        self.audio_player.seek_to(std::time::Duration::from_secs(0)).await?;
+        Ok(())
+    }
+
+    pub async fn increase_volume(&mut self, amount: f32) -> Result<()> {
+        let new_volume = (self.volume + amount).clamp(0.0, 1.0);
+        self.audio_player.set_volume(new_volume).await;
+        self.volume = new_volume;
+        tracing::debug!("Volume increased to {}", new_volume);
+        Ok(())
+    }
+
+    pub async fn decrease_volume(&mut self, amount: f32) -> Result<()> {
+        let new_volume = (self.volume - amount).clamp(0.0, 1.0);
+        self.audio_player.set_volume(new_volume).await;
+        self.volume = new_volume;
+        tracing::debug!("Volume decreased to {}", new_volume);
+        Ok(())
+    }
+
+    pub async fn toggle_mute(&mut self) -> Result<()> {
+        if self.volume > 0.0 {
+            self.audio_player.set_volume(0.0).await;
+            tracing::info!("Muted");
+        } else {
+            self.audio_player.set_volume(0.5).await;
+            self.volume = 0.5;
+            tracing::info!("Unmuted");
+        }
+        Ok(())
+    }
+
+    pub async fn increase_speed(&mut self, amount: f32) -> Result<()> {
+        let new_speed = (self.playback_speed + amount).clamp(0.5, 3.0);
+        self.audio_player.set_speed(new_speed).await;
+        self.playback_speed = new_speed;
+        tracing::debug!("Speed increased to {}x", new_speed);
+        Ok(())
+    }
+
+    pub async fn decrease_speed(&mut self, amount: f32) -> Result<()> {
+        let new_speed = (self.playback_speed - amount).clamp(0.5, 3.0);
+        self.audio_player.set_speed(new_speed).await;
+        self.playback_speed = new_speed;
+        tracing::debug!("Speed decreased to {}x", new_speed);
+        Ok(())
+    }
+
+    pub async fn seek_forward(&mut self, seconds: f64) -> Result<()> {
+        let duration = std::time::Duration::from_secs_f64(seconds);
+        self.audio_player.seek_forward(duration).await?;
+        tracing::debug!("Seeked forward {}s", seconds);
+        Ok(())
+    }
+
+    pub async fn seek_backward(&mut self, seconds: f64) -> Result<()> {
+        let duration = std::time::Duration::from_secs_f64(seconds);
+        self.audio_player.seek_backward(duration).await?;
+        tracing::debug!("Seeked backward {}s", seconds);
+        Ok(())
+    }
+
+    // View navigation methods
+
+    pub fn next_view(&mut self) {
+        self.current_view = match self.current_view {
+            View::Subscriptions => View::Episodes,
+            View::Episodes => View::Queue,
+            View::Queue => View::Search,
+            View::Search => View::Settings,
+            View::Settings => View::Subscriptions,
+        };
+        self.selected_index = 0;
+    }
+
+    pub fn previous_view(&mut self) {
+        self.current_view = match self.current_view {
+            View::Subscriptions => View::Settings,
+            View::Settings => View::Search,
+            View::Search => View::Queue,
+            View::Queue => View::Episodes,
+            View::Episodes => View::Subscriptions,
+        };
+        self.selected_index = 0;
+    }
+
+    // List navigation methods
+
+    pub fn goto_top(&mut self) {
+        self.selected_index = 0;
+    }
+
+    pub fn goto_bottom(&mut self) {
+        let max_index = match self.current_view {
+            View::Subscriptions => self.subscriptions.len().saturating_sub(1),
+            View::Episodes => self.episodes.len().saturating_sub(1),
+            View::Queue => 0, // TODO: Get queue length
+            _ => 0,
+        };
+        self.selected_index = max_index;
+    }
+
+    pub fn page_up(&mut self) {
+        self.selected_index = self.selected_index.saturating_sub(10);
+    }
+
+    pub fn page_down(&mut self) {
+        let max_index = match self.current_view {
+            View::Subscriptions => self.subscriptions.len().saturating_sub(1),
+            View::Episodes => self.episodes.len().saturating_sub(1),
+            View::Queue => 0,
+            _ => 0,
+        };
+        self.selected_index = (self.selected_index + 10).min(max_index);
+    }
+
+    // Item action methods
+
+    pub async fn add_selected_to_queue(&mut self) -> Result<()> {
+        if self.current_view == View::Episodes {
+            if let Some(episode) = self.episodes.get(self.selected_index) {
+                self.queue_manager.add_episode(episode.id).await?;
+                tracing::info!("Added '{}' to queue", episode.title);
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn download_selected_episode(&mut self) -> Result<()> {
+        if self.current_view == View::Episodes {
+            if let Some(episode) = self.episodes.get(self.selected_index).cloned() {
+                tracing::info!("Downloading episode: {}", episode.title);
+                // Spawn download task to not block UI
+                let download_manager = self.download_manager.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = download_manager.download_episode(&episode).await {
+                        tracing::error!("Download failed: {}", e);
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn delete_selected_download(&mut self) -> Result<()> {
+        if self.current_view == View::Episodes {
+            if let Some(episode) = self.episodes.get(self.selected_index) {
+                if episode.is_downloaded() {
+                    self.delete_download(episode).await?;
+                    // Reload episodes to update UI
+                    if let Some(sub) = &self.current_subscription {
+                        self.load_episodes_for_subscription(sub.id).await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn refresh_selected_subscription(&mut self) -> Result<()> {
+        if self.current_view == View::Subscriptions {
+            if let Some(subscription) = self.subscriptions.get(self.selected_index).cloned() {
+                tracing::info!("Refreshing subscription: {}", subscription.title);
+                self.feed_refresher.refresh_one(subscription).await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn refresh_all_subscriptions(&mut self) -> Result<()> {
+        tracing::info!("Refreshing all subscriptions");
+        let subscriptions = self.subscriptions.clone();
+        self.feed_refresher.refresh_all(subscriptions).await?;
+        self.load_subscriptions().await?;
+        Ok(())
+    }
+
+    pub async fn toggle_played_status(&mut self) -> Result<()> {
+        if self.current_view == View::Episodes {
+            if let Some(episode) = self.episodes.get(self.selected_index) {
+                let new_status = !episode.played;
+                self.db.mark_episode_played(episode.id, new_status).await?;
+                tracing::info!("Marked episode as {}", if new_status { "played" } else { "unplayed" });
+
+                // Reload episodes to update UI
+                if let Some(sub) = &self.current_subscription {
+                    self.load_episodes_for_subscription(sub.id).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // Search mode methods (placeholders for future UI state)
+
+    pub fn enter_search_mode(&mut self) {
+        self.set_view(View::Search);
+        tracing::debug!("Entered search mode");
+    }
+
+    pub fn exit_search_mode(&mut self) {
+        if self.current_view == View::Search {
+            self.set_view(View::Subscriptions);
+        }
+        tracing::debug!("Exited search mode");
+    }
+
+    /// Download an episode
+    ///
+    /// Downloads the episode audio to the configured download directory.
+    /// Progress can be tracked via `get_download_progress()`.
+    pub async fn download_episode(&self, episode: &Episode) -> Result<()> {
+        tracing::info!("Starting download for: {}", episode.title);
+        self.download_manager.download_episode(episode).await?;
+        Ok(())
+    }
+
+    /// Get the download progress for a specific episode
+    ///
+    /// Returns `None` if the episode is not currently downloading.
+    pub async fn get_download_progress(&self, episode_id: uuid::Uuid) -> Option<Arc<crate::download::DownloadProgress>> {
+        self.download_manager.get_download_progress(episode_id).await
+    }
+
+    /// Get all active downloads
+    ///
+    /// Returns a list of all episodes currently being downloaded with their progress.
+    pub async fn get_active_downloads(&self) -> Vec<Arc<crate::download::DownloadProgress>> {
+        self.download_manager.get_active_downloads().await
+    }
+
+    /// Cancel an active download
+    ///
+    /// Stops the download and cleans up any partial files.
+    pub async fn cancel_download(&self, episode_id: uuid::Uuid) -> Result<()> {
+        tracing::info!("Cancelling download for episode: {}", episode_id);
+        self.download_manager.cancel_download(episode_id).await?;
+        Ok(())
+    }
+
+    /// Delete a downloaded episode
+    ///
+    /// Removes the downloaded file from disk and updates the database.
+    pub async fn delete_download(&self, episode: &Episode) -> Result<()> {
+        tracing::info!("Deleting download for: {}", episode.title);
+        self.download_manager.delete_download(episode).await?;
+        Ok(())
+    }
 }
