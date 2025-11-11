@@ -31,20 +31,14 @@ impl Database {
             .context("Failed to connect to database")?;
 
         let db = Self { pool };
-        db.run_migrations().await?;
+
+        // Run migrations using sqlx's built-in migration system
+        sqlx::migrate!("./migrations")
+            .run(&db.pool)
+            .await
+            .context("Failed to run database migrations")?;
 
         Ok(db)
-    }
-
-    async fn run_migrations(&self) -> Result<()> {
-        // Read and execute migration file
-        let migration_sql = include_str!("../../migrations/001_initial_schema.sql");
-        sqlx::query(migration_sql)
-            .execute(&self.pool)
-            .await
-            .context("Failed to run migrations")?;
-
-        Ok(())
     }
 
     // Subscription methods
@@ -471,5 +465,80 @@ impl Default for PlaybackState {
             volume: 1.0,
             status: PlaybackStatus::Stopped,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    async fn create_test_db() -> (Database, TempDir) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db = Database::new(&db_path).await.unwrap();
+        (db, temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_migrations_run_successfully() {
+        let (db, _temp) = create_test_db().await;
+
+        // Verify _sqlx_migrations table exists
+        let result: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&db.pool)
+            .await
+            .expect("_sqlx_migrations table should exist");
+
+        assert!(result.0 > 0, "Should have at least one migration");
+    }
+
+    #[tokio::test]
+    async fn test_migrations_are_idempotent() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+
+        // First run
+        let db1 = Database::new(&db_path).await.unwrap();
+
+        // Verify initial migration ran
+        let count1: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&db1.pool)
+            .await
+            .unwrap();
+
+        drop(db1);
+
+        // Second run - should not error
+        let db2 = Database::new(&db_path).await.unwrap();
+
+        // Verify same number of migrations
+        let count2: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&db2.pool)
+            .await
+            .unwrap();
+
+        assert_eq!(count1.0, count2.0, "Migration count should be stable");
+    }
+
+    #[tokio::test]
+    async fn test_schema_created_correctly() {
+        let (db, _temp) = create_test_db().await;
+
+        // Verify all expected tables exist
+        let tables: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_sqlx_%' ORDER BY name"
+        )
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+
+        let table_names: Vec<String> = tables.into_iter().map(|(name,)| name).collect();
+
+        assert!(table_names.contains(&"subscriptions".to_string()));
+        assert!(table_names.contains(&"episodes".to_string()));
+        assert!(table_names.contains(&"queue_items".to_string()));
+        assert!(table_names.contains(&"playback_state".to_string()));
+        assert!(table_names.contains(&"config".to_string()));
     }
 }

@@ -1,5 +1,5 @@
 -- Create subscriptions table
-CREATE TABLE IF NOT EXISTS subscriptions (
+CREATE TABLE subscriptions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     description TEXT,
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 
 -- Create episodes table
-CREATE TABLE IF NOT EXISTS episodes (
+CREATE TABLE episodes (
     id TEXT PRIMARY KEY,
     subscription_id TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -38,12 +38,12 @@ CREATE TABLE IF NOT EXISTS episodes (
     UNIQUE(subscription_id, guid)
 );
 
-CREATE INDEX IF NOT EXISTS idx_episodes_subscription ON episodes(subscription_id);
-CREATE INDEX IF NOT EXISTS idx_episodes_published ON episodes(published_at DESC);
-CREATE INDEX IF NOT EXISTS idx_episodes_played ON episodes(played);
+CREATE INDEX idx_episodes_subscription ON episodes(subscription_id);
+CREATE INDEX idx_episodes_published ON episodes(published_at DESC);
+CREATE INDEX idx_episodes_played ON episodes(played);
 
 -- Create queue table
-CREATE TABLE IF NOT EXISTS queue_items (
+CREATE TABLE queue_items (
     id TEXT PRIMARY KEY,
     episode_id TEXT NOT NULL,
     position INTEGER NOT NULL,
@@ -53,10 +53,10 @@ CREATE TABLE IF NOT EXISTS queue_items (
     UNIQUE(episode_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_queue_position ON queue_items(position);
+CREATE INDEX idx_queue_position ON queue_items(position);
 
 -- Create playback state table
-CREATE TABLE IF NOT EXISTS playback_state (
+CREATE TABLE playback_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     current_episode_id TEXT,
     position_seconds REAL NOT NULL DEFAULT 0,
@@ -69,11 +69,11 @@ CREATE TABLE IF NOT EXISTS playback_state (
 );
 
 -- Initialize playback state
-INSERT OR IGNORE INTO playback_state (id, position_seconds, playback_rate, volume, status, updated_at)
+INSERT INTO playback_state (id, position_seconds, playback_rate, volume, status, updated_at)
 VALUES (1, 0, 1.0, 1.0, 'Stopped', CURRENT_TIMESTAMP);
 
 -- Create config table
-CREATE TABLE IF NOT EXISTS config (
+CREATE TABLE config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data TEXT NOT NULL
 );
