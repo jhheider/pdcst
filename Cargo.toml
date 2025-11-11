@@ -1,0 +1,72 @@
+[package]
+name = "podcast-tui"
+version = "1.0.0"
+edition = "2021"
+authors = ["Podcast TUI Contributors"]
+description = "A terminal-based podcast player with PocketCasts feature parity"
+license = "MIT"
+
+[dependencies]
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+ratatui-image = "2.0"
+
+# Image processing
+image = "0.25"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+
+# Audio
+rodio = "0.19"
+
+# HTTP/Networking
+reqwest = { version = "0.12", features = ["stream", "json"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# RSS/XML
+rss = "2.0"
+quick-xml = "0.36"
+opml = "1.1"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1.11", features = ["v4", "serde"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Utilities
+dirs = "5.0"
+url = "2.5"
+bytes = "1.9"
+futures = "0.3"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+[dev-dependencies]
+tempfile = "3.0"
+mockito = "1.0"
+
+[[bin]]
+name = "podcast-tui"
+path = "src/main.rs"
