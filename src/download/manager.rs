@@ -1,3 +1,4 @@
+use crate::app::events::{EventBus, StateEvent};
 use crate::download::DownloadProgress;
 use crate::models::{DownloadStatus, Episode};
 use crate::storage::Database;
@@ -19,10 +20,11 @@ pub struct DownloadManager {
     semaphore: Arc<Semaphore>,
     active_downloads: Arc<RwLock<HashMap<Uuid, Arc<DownloadProgress>>>>,
     cancel_signals: Arc<RwLock<HashMap<Uuid, tokio::sync::watch::Sender<bool>>>>,
+    event_bus: Arc<EventBus>,
 }
 
 impl DownloadManager {
-    pub fn new(download_dir: PathBuf, max_concurrent: usize, db: Arc<Database>) -> Self {
+    pub fn new(download_dir: PathBuf, max_concurrent: usize, db: Arc<Database>, event_bus: Arc<EventBus>) -> Self {
         let client = Client::builder()
             .user_agent("podcast-tui/1.0")
             .timeout(std::time::Duration::from_secs(600)) // 10 minute timeout
@@ -36,6 +38,7 @@ impl DownloadManager {
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             cancel_signals: Arc::new(RwLock::new(HashMap::new())),
+            event_bus,
         }
     }
 
@@ -59,6 +62,10 @@ impl DownloadManager {
         if let Some(cancel_tx) = self.cancel_signals.write().await.remove(&episode_id) {
             let _ = cancel_tx.send(true);
             tracing::info!("Cancellation requested for episode: {}", episode_id);
+
+            // Emit download cancelled event
+            self.event_bus.publish(StateEvent::DownloadCancelled { episode_id });
+
             Ok(())
         } else {
             anyhow::bail!("No active download for episode: {}", episode_id)
@@ -69,6 +76,9 @@ impl DownloadManager {
         let _permit = self.semaphore.acquire().await.unwrap();
 
         tracing::info!("Downloading episode: {}", episode.title);
+
+        // Emit download started event
+        self.event_bus.publish(StateEvent::DownloadStarted { episode_id: episode.id });
 
         // Get content length for progress tracking
         let total_size = self.get_content_length(&episode.url).await.ok();
@@ -125,6 +135,10 @@ impl DownloadManager {
                     episode.title,
                     filepath.display()
                 );
+
+                // Emit download completed event
+                self.event_bus.publish(StateEvent::DownloadCompleted { episode_id: episode.id });
+
                 Ok(filepath)
             }
             Err(e) => {
@@ -144,6 +158,15 @@ impl DownloadManager {
                 let _ = tokio::fs::remove_file(&filepath).await;
 
                 tracing::error!("Failed to download episode {}: {}", episode.title, e);
+
+                // Emit download failed event (only if not cancelled - cancellation event already sent)
+                if !e.to_string().contains("cancelled") {
+                    self.event_bus.publish(StateEvent::DownloadFailed {
+                        episode_id: episode.id,
+                        error: e.to_string()
+                    });
+                }
+
                 Err(e)
             }
         }
@@ -186,6 +209,8 @@ impl DownloadManager {
 
         let mut stream = response.bytes_stream();
         let mut total_bytes = 0u64;
+        let mut last_progress_event_time = tokio::time::Instant::now();
+        let episode_id = progress.episode_id;
 
         while let Some(chunk_result) = stream.next().await {
             // Check for cancellation
@@ -203,6 +228,16 @@ impl DownloadManager {
 
             // Update progress
             progress.update(chunk.len() as u64).await;
+
+            // Emit progress event every 1 second (throttled)
+            if last_progress_event_time.elapsed() >= tokio::time::Duration::from_secs(1) {
+                let percent = progress.get_progress().await as f32;
+                self.event_bus.publish(StateEvent::DownloadProgress {
+                    episode_id,
+                    percent,
+                });
+                last_progress_event_time = tokio::time::Instant::now();
+            }
         }
 
         file.flush().await.context("Failed to flush file")?;
@@ -262,6 +297,7 @@ impl DownloadManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::events::EventBus;
     use crate::models::{Episode, Subscription};
     use chrono::Utc;
     use tempfile::TempDir;
@@ -291,7 +327,7 @@ mod tests {
         let (db, temp_dir) = setup_test_db().await;
         let download_dir = temp_dir.path().join("downloads");
 
-        let manager = DownloadManager::new(download_dir.clone(), 3, db);
+        let manager = DownloadManager::new(download_dir.clone(), 3, db, Arc::new(EventBus::new()));
 
         assert_eq!(manager.download_dir, download_dir);
         assert!(manager.active_downloads.read().await.is_empty());
@@ -302,7 +338,7 @@ mod tests {
     async fn test_get_active_downloads_empty() {
         let (db, temp_dir) = setup_test_db().await;
         let download_dir = temp_dir.path().join("downloads");
-        let manager = DownloadManager::new(download_dir, 3, db);
+        let manager = DownloadManager::new(download_dir, 3, db, Arc::new(EventBus::new()));
 
         let active = manager.get_active_downloads().await;
         assert_eq!(active.len(), 0);
@@ -312,7 +348,7 @@ mod tests {
     async fn test_get_download_progress_nonexistent() {
         let (db, temp_dir) = setup_test_db().await;
         let download_dir = temp_dir.path().join("downloads");
-        let manager = DownloadManager::new(download_dir, 3, db);
+        let manager = DownloadManager::new(download_dir, 3, db, Arc::new(EventBus::new()));
 
         let episode_id = Uuid::new_v4();
         let progress = manager.get_download_progress(episode_id).await;
@@ -323,7 +359,7 @@ mod tests {
     async fn test_cancel_download_nonexistent() {
         let (db, temp_dir) = setup_test_db().await;
         let download_dir = temp_dir.path().join("downloads");
-        let manager = DownloadManager::new(download_dir, 3, db);
+        let manager = DownloadManager::new(download_dir, 3, db, Arc::new(EventBus::new()));
 
         let episode_id = Uuid::new_v4();
         let result = manager.cancel_download(episode_id).await;
@@ -335,7 +371,7 @@ mod tests {
     async fn test_generate_filename_basic() {
         let (db, temp_dir) = setup_test_db().await;
         let download_dir = temp_dir.path().join("downloads");
-        let manager = DownloadManager::new(download_dir, 3, db);
+        let manager = DownloadManager::new(download_dir, 3, db, Arc::new(EventBus::new()));
 
         let episode = create_test_episode("Test Episode", "https://example.com/audio.mp3");
         let filename = manager.generate_filename(&episode);
@@ -347,7 +383,7 @@ mod tests {
     async fn test_generate_filename_sanitize() {
         let (db, temp_dir) = setup_test_db().await;
         let download_dir = temp_dir.path().join("downloads");
-        let manager = DownloadManager::new(download_dir, 3, db);
+        let manager = DownloadManager::new(download_dir, 3, db, Arc::new(EventBus::new()));
 
         let episode = create_test_episode(
             "Test/Episode:With*Bad?Chars",
@@ -364,7 +400,7 @@ mod tests {
     async fn test_generate_filename_extension() {
         let (db, temp_dir) = setup_test_db().await;
         let download_dir = temp_dir.path().join("downloads");
-        let manager = DownloadManager::new(download_dir, 3, db);
+        let manager = DownloadManager::new(download_dir, 3, db, Arc::new(EventBus::new()));
 
         let episode = create_test_episode("Episode", "https://example.com/audio.m4a");
         let filename = manager.generate_filename(&episode);
@@ -379,7 +415,7 @@ mod tests {
     async fn test_generate_filename_no_extension() {
         let (db, temp_dir) = setup_test_db().await;
         let download_dir = temp_dir.path().join("downloads");
-        let manager = DownloadManager::new(download_dir, 3, db);
+        let manager = DownloadManager::new(download_dir, 3, db, Arc::new(EventBus::new()));
 
         let episode = create_test_episode("Episode", "https://example.com/audio");
         let filename = manager.generate_filename(&episode);
@@ -426,7 +462,7 @@ mod tests {
     async fn test_concurrent_download_tracking() {
         let (db, temp_dir) = setup_test_db().await;
         let download_dir = temp_dir.path().join("downloads");
-        let manager = Arc::new(DownloadManager::new(download_dir, 3, db));
+        let manager = Arc::new(DownloadManager::new(download_dir, 3, db, Arc::new(EventBus::new())));
 
         // Simulate adding downloads to tracking
         let episode1_id = Uuid::new_v4();

@@ -37,20 +37,25 @@ impl App {
         let db_path = config.database_path();
         let db = Arc::new(Database::new(&db_path).await?);
 
+        // Create event bus first (needed by audio player)
+        let event_bus = Arc::new(EventBus::new());
+
         // Initialize audio player and streamer
-        let audio_player = Arc::new(AudioPlayer::new()?);
+        let audio_player = Arc::new(AudioPlayer::new(event_bus.clone())?);
         let audio_streamer = Arc::new(AudioStreamer::new());
 
         // Initialize managers
-        let queue_manager = Arc::new(QueueManager::new(db.clone()));
+        let queue_manager = Arc::new(QueueManager::new(db.clone(), event_bus.clone()));
         let download_manager = Arc::new(DownloadManager::new(
             config.download_dir.clone(),
             config.max_concurrent_downloads,
             db.clone(),
+            event_bus.clone(),
         ));
         let feed_refresher = Arc::new(FeedRefresher::new(
             config.max_concurrent_refreshes,
             db.clone(),
+            event_bus.clone(),
         ));
         let podcast_search = Arc::new(PodcastSearch::new());
 
@@ -59,9 +64,6 @@ impl App {
 
         // Load artwork cache from disk
         artwork_manager.load_cache_from_disk().await?;
-
-        // Create event bus
-        let event_bus = Arc::new(EventBus::new());
 
         // Create application state
         let state = AppState::new(
@@ -114,29 +116,102 @@ impl App {
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> Result<()> {
-        loop {
-            // Draw UI
-            terminal.draw(|f| {
-                self.ui.render(f, &self.state);
-            })?;
+        // Subscribe to state events
+        let mut event_rx = self.state.event_bus.subscribe();
 
-            // Handle events with timeout
-            if event::poll(Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Char('q') => {
-                            tracing::info!("Quit requested");
-                            break;
-                        }
-                        _ => {
-                            self.handle_key_event(key.code).await?;
+        // Load initial data
+        if self.state.subscriptions.is_empty() {
+            self.state.load_subscriptions().await?;
+        }
+
+        // Initial draw
+        terminal.draw(|f| {
+            self.ui.render(f, &self.state);
+        })?;
+
+        // Create ticker for polling keyboard input (non-blocking)
+        let mut tick_interval = tokio::time::interval(Duration::from_millis(50));
+
+        loop {
+            tokio::select! {
+                // Handle state events
+                Ok(state_event) = event_rx.recv() => {
+                    // Update state based on event
+                    self.handle_state_event(state_event).await?;
+
+                    // Redraw UI
+                    terminal.draw(|f| {
+                        self.ui.render(f, &self.state);
+                    })?;
+                }
+
+                // Poll for keyboard input
+                _ = tick_interval.tick() => {
+                    if event::poll(Duration::from_millis(0))? {
+                        if let Event::Key(key) = event::read()? {
+                            match key.code {
+                                KeyCode::Char('q') => {
+                                    tracing::info!("Quit requested");
+                                    break;
+                                }
+                                _ => {
+                                    self.handle_key_event(key.code).await?;
+
+                                    // Redraw after keyboard input
+                                    terminal.draw(|f| {
+                                        self.ui.render(f, &self.state);
+                                    })?;
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
 
-            // Update state
-            self.state.update().await?;
+        Ok(())
+    }
+
+    async fn handle_state_event(&mut self, event: StateEvent) -> Result<()> {
+        use state::View;
+        use StateEvent::*;
+
+        match event {
+            PlaybackStarted { episode_id } => {
+                self.state.is_playing = true;
+                tracing::debug!("Playback started: {}", episode_id);
+            }
+            PlaybackPaused => {
+                self.state.is_playing = false;
+            }
+            PlaybackResumed => {
+                self.state.is_playing = true;
+            }
+            PlaybackStopped => {
+                self.state.is_playing = false;
+                self.state.playback_position = 0.0;
+            }
+            PlaybackCompleted { .. } => {
+                self.state.is_playing = false;
+            }
+            PlaybackPosition { position_secs } => {
+                self.state.playback_position = position_secs;
+            }
+            VolumeChanged { volume } => {
+                self.state.volume = volume;
+            }
+            SpeedChanged { speed } => {
+                self.state.playback_speed = speed;
+            }
+            QueueUpdated => {
+                // Reload queue if we're on the queue view
+                if self.state.current_view == View::Queue {
+                    let _ = self.state.load_queue().await;
+                }
+            }
+            _ => {
+                // Other events don't need immediate UI state updates
+            }
         }
 
         Ok(())

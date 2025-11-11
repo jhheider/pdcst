@@ -1,9 +1,16 @@
 use super::*;
+use crate::app::events::EventBus;
+
+// Helper function to create an AudioPlayer for tests
+fn create_test_player() -> AudioPlayer {
+    let event_bus = Arc::new(EventBus::new());
+    AudioPlayer::new(event_bus).unwrap()
+}
 
 #[tokio::test]
 async fn test_audio_player_is_send_sync() {
     // This test verifies AudioPlayer can be moved across thread boundaries
-    let player = Arc::new(AudioPlayer::new().unwrap());
+    let player = Arc::new(create_test_player());
 
     let p1 = player.clone();
     let p2 = player.clone();
@@ -24,14 +31,14 @@ async fn test_audio_player_is_send_sync() {
 
 #[tokio::test]
 async fn test_new_player_is_stopped() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
     assert!(!player.is_playing().await);
     assert_eq!(player.get_position().await, 0.0);
 }
 
 #[tokio::test]
 async fn test_volume_clamps_to_valid_range() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     player.set_volume(-1.0).await;
     assert_eq!(player.get_volume().await, 0.0);
@@ -45,7 +52,7 @@ async fn test_volume_clamps_to_valid_range() {
 
 #[tokio::test]
 async fn test_speed_clamps_to_valid_range() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     player.set_speed(0.05).await;
     let speed = player.get_speed().await;
@@ -58,7 +65,7 @@ async fn test_speed_clamps_to_valid_range() {
 
 #[tokio::test]
 async fn test_pause_sets_state() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     player.pause().await;
 
@@ -68,7 +75,7 @@ async fn test_pause_sets_state() {
 
 #[tokio::test]
 async fn test_play_sets_state() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     // Set paused state first
     player.pause().await;
@@ -84,7 +91,7 @@ async fn test_play_sets_state() {
 
 #[tokio::test]
 async fn test_stop_resets_state() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     player.stop().await;
 
@@ -97,7 +104,7 @@ async fn test_stop_resets_state() {
 
 #[tokio::test]
 async fn test_seek_forward_with_operation_lock() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     let result = player.seek_forward(Duration::from_secs(30)).await;
 
@@ -107,7 +114,7 @@ async fn test_seek_forward_with_operation_lock() {
 
 #[tokio::test]
 async fn test_seek_backward_with_operation_lock() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     let result = player.seek_backward(Duration::from_secs(10)).await;
 
@@ -117,7 +124,7 @@ async fn test_seek_backward_with_operation_lock() {
 
 #[tokio::test]
 async fn test_seek_to_specific_position() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     let target = Duration::from_secs(100);
     let result = player.seek_to(target).await;
@@ -128,14 +135,14 @@ async fn test_seek_to_specific_position() {
 
 #[tokio::test]
 async fn test_get_current_episode_initially_none() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     assert_eq!(player.get_current_episode().await, None);
 }
 
 #[tokio::test]
 async fn test_volume_persists_across_calls() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     player.set_volume(0.3).await;
     assert_eq!(player.get_volume().await, 0.3);
@@ -146,7 +153,7 @@ async fn test_volume_persists_across_calls() {
 
 #[tokio::test]
 async fn test_speed_persists_across_calls() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     player.set_speed(1.5).await;
     assert_eq!(player.get_speed().await, 1.5);
@@ -157,7 +164,7 @@ async fn test_speed_persists_across_calls() {
 
 #[tokio::test]
 async fn test_concurrent_volume_changes() {
-    let player = Arc::new(AudioPlayer::new().unwrap());
+    let player = Arc::new(create_test_player());
 
     let mut handles = vec![];
 
@@ -183,7 +190,7 @@ async fn test_concurrent_volume_changes() {
 
 #[tokio::test]
 async fn test_concurrent_speed_changes() {
-    let player = Arc::new(AudioPlayer::new().unwrap());
+    let player = Arc::new(create_test_player());
 
     let mut handles = vec![];
 
@@ -209,7 +216,7 @@ async fn test_concurrent_speed_changes() {
 
 #[tokio::test]
 async fn test_concurrent_seeks() {
-    let player = Arc::new(AudioPlayer::new().unwrap());
+    let player = Arc::new(create_test_player());
 
     let mut handles = vec![];
 
@@ -234,7 +241,7 @@ async fn test_concurrent_seeks() {
 
 #[tokio::test]
 async fn test_mixed_concurrent_operations() {
-    let player = Arc::new(AudioPlayer::new().unwrap());
+    let player = Arc::new(create_test_player());
 
     let mut handles = vec![];
 
@@ -264,15 +271,15 @@ async fn test_mixed_concurrent_operations() {
 
 #[tokio::test]
 async fn test_is_stopped_after_creation() {
-    let player = AudioPlayer::new().unwrap();
+    let player = create_test_player();
 
     assert!(player.is_stopped().await);
 }
 
 #[tokio::test]
 async fn test_multiple_players_independent() {
-    let player1 = AudioPlayer::new().unwrap();
-    let player2 = AudioPlayer::new().unwrap();
+    let player1 = create_test_player();
+    let player2 = create_test_player();
 
     player1.set_volume(0.3).await;
     player2.set_volume(0.7).await;
@@ -291,7 +298,7 @@ mod proptests {
         fn prop_volume_always_clamped(vol in -1000.0f32..1000.0f32) {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let player = AudioPlayer::new().unwrap();
+                let player = create_test_player();
                 player.set_volume(vol).await;
                 let actual = player.get_volume().await;
                 prop_assert!(actual >= 0.0 && actual <= 1.0,
@@ -305,7 +312,7 @@ mod proptests {
         fn prop_speed_always_positive(speed in -100.0f32..100.0f32) {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let player = AudioPlayer::new().unwrap();
+                let player = create_test_player();
                 player.set_speed(speed).await;
                 let actual = player.get_speed().await;
                 prop_assert!(actual > 0.0,
@@ -319,7 +326,7 @@ mod proptests {
         fn prop_speed_within_bounds(speed in -100.0f32..100.0f32) {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let player = AudioPlayer::new().unwrap();
+                let player = create_test_player();
                 player.set_speed(speed).await;
                 let actual = player.get_speed().await;
                 prop_assert!(actual >= 0.1 && actual <= 4.0,
@@ -333,7 +340,7 @@ mod proptests {
         fn prop_seek_backward_never_negative(seek_back_secs in 0u64..10000) {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let player = AudioPlayer::new().unwrap();
+                let player = create_test_player();
 
                 player.seek_backward(Duration::from_secs(seek_back_secs)).await.unwrap();
                 let pos = player.get_position().await;
@@ -349,7 +356,7 @@ mod proptests {
         fn prop_position_never_negative(operations in prop::collection::vec(0u8..5, 0..100)) {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let player = AudioPlayer::new().unwrap();
+                let player = create_test_player();
 
                 // Perform random operations
                 for op in operations {
@@ -374,7 +381,7 @@ mod proptests {
         fn prop_volume_persistence(vol1 in 0.0f32..1.0f32, vol2 in 0.0f32..1.0f32) {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let player = AudioPlayer::new().unwrap();
+                let player = create_test_player();
 
                 player.set_volume(vol1).await;
                 let retrieved1 = player.get_volume().await;
@@ -395,7 +402,7 @@ mod proptests {
         fn prop_speed_persistence(speed1 in 0.1f32..4.0f32, speed2 in 0.1f32..4.0f32) {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let player = AudioPlayer::new().unwrap();
+                let player = create_test_player();
 
                 player.set_speed(speed1).await;
                 let retrieved1 = player.get_speed().await;

@@ -13,6 +13,7 @@
 //!
 //! Never acquire a lower-numbered lock while holding a higher-numbered lock.
 
+use crate::app::events::{EventBus, StateEvent};
 use anyhow::{Context, Result};
 use rodio::{Decoder, OutputStream, Sink, Source};
 use std::io::Cursor;
@@ -97,13 +98,15 @@ pub struct AudioPlayer {
     completion_tx: tokio::sync::mpsc::UnboundedSender<Uuid>,
     /// Receiver for playback completion events (take once to set up callback)
     completion_rx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Uuid>>>>,
+    /// Event bus for publishing state changes
+    event_bus: Arc<EventBus>,
 }
 
 impl AudioPlayer {
-    /// Create a new audio player
+    /// Create a new audio player with event publishing
     ///
-    /// Spawns a dedicated audio thread that owns the OutputStream.
-    pub fn new() -> Result<Self> {
+    /// Spawns a dedicated audio thread that owns the OutputStream and publishes state changes to the event bus.
+    pub fn new(event_bus: Arc<EventBus>) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
         let state = Arc::new(AudioState::new());
         let (completion_tx, completion_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -111,8 +114,9 @@ impl AudioPlayer {
         // Spawn dedicated audio thread
         let state_clone = state.clone();
         let completion_tx_clone = completion_tx.clone();
+        let event_bus_clone = event_bus.clone();
         std::thread::spawn(move || {
-            audio_thread(rx, state_clone, completion_tx_clone);
+            audio_thread(rx, state_clone, completion_tx_clone, event_bus_clone);
         });
 
         Ok(Self {
@@ -121,6 +125,7 @@ impl AudioPlayer {
             operation_lock: Arc::new(TokioMutex::new(())),
             completion_tx,
             completion_rx: Arc::new(Mutex::new(Some(completion_rx))),
+            event_bus,
         })
     }
 
@@ -161,6 +166,9 @@ impl AudioPlayer {
             *current = Some(episode_id);
         }
 
+        // Emit playback started event
+        self.event_bus.publish(StateEvent::PlaybackStarted { episode_id });
+
         Ok(())
     }
 
@@ -169,6 +177,9 @@ impl AudioPlayer {
         let _ = self.command_tx.send(AudioCommand::Pause);
         self.state.set_paused(true);
         tracing::debug!("Playback paused");
+
+        // Emit playback paused event
+        self.event_bus.publish(StateEvent::PlaybackPaused);
     }
 
     /// Resume playback
@@ -176,6 +187,9 @@ impl AudioPlayer {
         let _ = self.command_tx.send(AudioCommand::Resume);
         self.state.set_playing(true);
         tracing::debug!("Playback resumed");
+
+        // Emit playback resumed event
+        self.event_bus.publish(StateEvent::PlaybackResumed);
     }
 
     /// Stop playback
@@ -189,6 +203,9 @@ impl AudioPlayer {
         *current = None;
 
         tracing::debug!("Playback stopped");
+
+        // Emit playback stopped event
+        self.event_bus.publish(StateEvent::PlaybackStopped);
     }
 
     /// Check if currently playing
@@ -262,6 +279,9 @@ impl AudioPlayer {
 
         let _ = self.command_tx.send(AudioCommand::SetSpeed(clamped_speed));
         tracing::debug!("Playback speed set to {}", clamped_speed);
+
+        // Emit speed changed event
+        self.event_bus.publish(StateEvent::SpeedChanged { speed: clamped_speed });
     }
 
     /// Get current playback speed
@@ -281,6 +301,9 @@ impl AudioPlayer {
             .command_tx
             .send(AudioCommand::SetVolume(clamped_volume));
         tracing::debug!("Volume set to {}", clamped_volume);
+
+        // Emit volume changed event
+        self.event_bus.publish(StateEvent::VolumeChanged { volume: clamped_volume });
     }
 
     /// Get current volume
@@ -300,11 +323,7 @@ impl Drop for AudioPlayer {
     }
 }
 
-impl Default for AudioPlayer {
-    fn default() -> Self {
-        Self::new().expect("Failed to create default audio player")
-    }
-}
+// Note: Default implementation removed as AudioPlayer now requires an EventBus parameter
 
 /// Audio thread that owns the OutputStream and Sink
 ///
@@ -314,6 +333,7 @@ fn audio_thread(
     rx: mpsc::Receiver<AudioCommand>,
     state: Arc<AudioState>,
     completion_tx: tokio::sync::mpsc::UnboundedSender<Uuid>,
+    event_bus: Arc<EventBus>,
 ) {
     // Create audio output stream - this stays on this thread
     let Ok((_stream, stream_handle)) = OutputStream::try_default() else {
@@ -325,6 +345,7 @@ fn audio_thread(
     let mut playback_start_time: Option<Instant> = None;
     let mut start_position = Duration::ZERO;
     let mut current_playing_episode: Option<Uuid> = None;
+    let mut last_position_event_time = Instant::now();
 
     loop {
         // Use recv_timeout to periodically update position
@@ -356,6 +377,14 @@ fn audio_thread(
                         let elapsed = start_time.elapsed();
                         let position = start_position + elapsed;
                         state.set_position(position);
+
+                        // Emit position event every 1 second
+                        if last_position_event_time.elapsed() >= Duration::from_secs(1) {
+                            event_bus.publish(StateEvent::PlaybackPosition {
+                                position_secs: position.as_secs_f64(),
+                            });
+                            last_position_event_time = Instant::now();
+                        }
                     }
                 }
 
@@ -370,6 +399,9 @@ fn audio_thread(
                         if let Some(episode_id) = current_playing_episode.take() {
                             tracing::debug!("Playback completed for episode {}", episode_id);
                             let _ = completion_tx.send(episode_id);
+
+                            // Emit playback completed event
+                            event_bus.publish(StateEvent::PlaybackCompleted { episode_id });
                         } else {
                             tracing::debug!("Playback completed");
                         }

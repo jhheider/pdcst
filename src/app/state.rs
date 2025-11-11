@@ -160,17 +160,17 @@ impl AppState {
             });
         }
 
-        Self {
+        let state = Self {
             config,
             db,
-            audio_player,
+            audio_player: audio_player.clone(),
             audio_streamer,
             queue_manager,
             download_manager,
             feed_refresher,
             podcast_search,
             artwork_manager,
-            event_bus,
+            event_bus: event_bus.clone(),
             current_view: View::Subscriptions,
             selected_index: 0,
             scroll_offset: 0,
@@ -189,22 +189,16 @@ impl AppState {
             playback_position: 0.0,
             playback_speed: 1.0,
             volume: 1.0,
-        }
+        };
+
+        // State updates will come from events published by AudioPlayer, DownloadManager, etc.
+        // No need for manual polling anymore!
+
+        state
     }
 
-    pub async fn update(&mut self) -> Result<()> {
-        // Update playback state
-        self.is_playing = self.audio_player.is_playing().await;
-        self.playback_speed = self.audio_player.get_speed().await;
-        self.volume = self.audio_player.get_volume().await;
-
-        // Load subscriptions if not loaded
-        if self.subscriptions.is_empty() {
-            self.load_subscriptions().await?;
-        }
-
-        Ok(())
-    }
+    // Note: update() method removed - state is now event-driven
+    // State fields are updated via events published by AudioPlayer, DownloadManager, etc.
 
     pub async fn load_subscriptions(&mut self) -> Result<()> {
         self.subscriptions = self.db.get_all_subscriptions().await?;

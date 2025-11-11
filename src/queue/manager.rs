@@ -1,3 +1,4 @@
+use crate::app::events::{EventBus, StateEvent};
 use crate::models::{Episode, QueueItem};
 use crate::storage::Database;
 use anyhow::Result;
@@ -6,11 +7,12 @@ use uuid::Uuid;
 
 pub struct QueueManager {
     db: Arc<Database>,
+    event_bus: Arc<EventBus>,
 }
 
 impl QueueManager {
-    pub fn new(db: Arc<Database>) -> Self {
-        Self { db }
+    pub fn new(db: Arc<Database>, event_bus: Arc<EventBus>) -> Self {
+        Self { db, event_bus }
     }
 
     pub async fn add_episode(&self, episode_id: Uuid) -> Result<()> {
@@ -26,18 +28,30 @@ impl QueueManager {
             episode_id,
             position
         );
+
+        // Emit queue updated event
+        self.event_bus.publish(StateEvent::QueueUpdated);
+
         Ok(())
     }
 
     pub async fn remove_episode(&self, episode_id: Uuid) -> Result<()> {
         self.db.remove_from_queue(episode_id).await?;
         tracing::info!("Removed episode {} from queue", episode_id);
+
+        // Emit queue updated event
+        self.event_bus.publish(StateEvent::QueueUpdated);
+
         Ok(())
     }
 
     pub async fn move_episode(&self, episode_id: Uuid, new_position: i64) -> Result<()> {
         self.db.reorder_queue_item(episode_id, new_position).await?;
         tracing::info!("Moved episode {} to position {}", episode_id, new_position);
+
+        // Emit queue updated event
+        self.event_bus.publish(StateEvent::QueueUpdated);
+
         Ok(())
     }
 
@@ -87,6 +101,10 @@ impl QueueManager {
     pub async fn clear(&self) -> Result<()> {
         self.db.clear_queue().await?;
         tracing::info!("Cleared queue");
+
+        // Emit queue updated event
+        self.event_bus.publish(StateEvent::QueueUpdated);
+
         Ok(())
     }
 
