@@ -274,11 +274,14 @@ fn audio_thread(
     state: Arc<AudioState>,
     event_bus: Arc<EventBus>,
 ) {
+    // No output device (a headless box, CI, or an audio-less machine) must not
+    // kill the thread: stay alive in silent mode so the handle and command
+    // channel keep working and the app never deadlocks - it just makes no sound.
     let device = match DeviceSinkBuilder::open_default_sink() {
-        Ok(d) => d,
+        Ok(d) => Some(d),
         Err(e) => {
-            tracing::error!("no audio output device: {e}");
-            return;
+            tracing::error!("no audio output device: {e}; running silent");
+            None
         }
     };
 
@@ -293,7 +296,7 @@ fn audio_thread(
                 if let AudioCommand::Play { episode_id, .. } = &cmd {
                     current_episode = Some(*episode_id);
                 }
-                handle_command(cmd, &mut player, &device, &state, &event_bus);
+                handle_command(cmd, &mut player, device.as_ref(), &state, &event_bus);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if let Some(p) = &player {
@@ -328,7 +331,7 @@ fn audio_thread(
 fn handle_command(
     cmd: AudioCommand,
     player: &mut Option<Player>,
-    device: &MixerDeviceSink,
+    device: Option<&MixerDeviceSink>,
     state: &Arc<AudioState>,
     event_bus: &Arc<EventBus>,
 ) {
@@ -342,30 +345,34 @@ fn handle_command(
             if let Some(p) = player.take() {
                 p.stop();
             }
-            let decoder = match Decoder::new(Cursor::new(data)) {
-                Ok(s) => s,
-                Err(e) => {
-                    let error = format!("failed to decode audio: {e}");
-                    tracing::error!("{error}");
-                    event_bus.publish(StateEvent::PlaybackError { error });
-                    return;
+            if let Some(device) = device {
+                let decoder = match Decoder::new(Cursor::new(data)) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let error = format!("failed to decode audio: {e}");
+                        tracing::error!("{error}");
+                        event_bus.publish(StateEvent::PlaybackError { error });
+                        return;
+                    }
+                };
+                // Wrap in the time-stretcher for pitch-corrected speed. Tempo and
+                // position are shared with AudioState, so speed changes apply
+                // live and position is reported in source time.
+                let source =
+                    WsolaSource::new(decoder, state.tempo.clone(), state.position_ms.clone());
+                let p = Player::connect_new(device.mixer());
+                p.append(source);
+                p.set_volume(*state.volume.lock().unwrap());
+                if start > Duration::ZERO
+                    && let Err(e) = p.try_seek(start)
+                {
+                    tracing::warn!("resume seek to {start:?} failed: {e}");
                 }
-            };
-            // Wrap in the time-stretcher for pitch-corrected speed. Tempo and
-            // position are shared with AudioState, so speed changes apply live
-            // and position is reported in source time.
-            let source = WsolaSource::new(decoder, state.tempo.clone(), state.position_ms.clone());
-            let p = Player::connect_new(device.mixer());
-            p.append(source);
-            p.set_volume(*state.volume.lock().unwrap());
-            if start > Duration::ZERO
-                && let Err(e) = p.try_seek(start)
-            {
-                tracing::warn!("resume seek to {start:?} failed: {e}");
+                *player = Some(p);
             }
+            // State stays consistent even in silent mode (no device).
             state.set_playing(true);
             state.set_position(start);
-            *player = Some(p);
         }
 
         AudioCommand::Pause => {
@@ -393,12 +400,13 @@ fn handle_command(
 
         AudioCommand::Seek(position) => {
             // Real seek: the decoder seeks within its buffer, O(1)-ish, no
-            // re-decode from zero.
-            if let Some(p) = player {
-                match p.try_seek(position) {
+            // re-decode from zero. In silent mode we still track the position.
+            match player {
+                Some(p) => match p.try_seek(position) {
                     Ok(()) => state.set_position(position),
                     Err(e) => tracing::error!("seek to {position:?} failed: {e}"),
-                }
+                },
+                None => state.set_position(position),
             }
         }
 
