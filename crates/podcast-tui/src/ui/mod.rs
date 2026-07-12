@@ -107,6 +107,8 @@ impl Ui {
                 Line::from(""),
                 Line::from("Press '/' to search and subscribe,"),
                 Line::from("or import an OPML file with --import <file>."),
+                Line::from(""),
+                Line::from("Then press 'A' on a feed to auto-fill Up Next."),
             ])
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center)
@@ -579,8 +581,17 @@ impl Ui {
             f.render_widget(empty, chunks[1]);
         }
 
-        // Help text
-        let help_text = "[1-4] Views | [Tab] Cycle | [Enter] Open | [/] Search | [Space] Play | [?] Help | [q] Quit";
+        // Contextual key hints: show the actions available in the current view,
+        // so features like the auto-queue toggle ([A]) are discoverable without
+        // opening Help. A common tail carries the always-available keys.
+        let view_hint = match state.current_view {
+            View::Subscriptions => "[Enter] Open  [A] Auto-queue  [r] Refresh  [u] Unsub",
+            View::Episodes => "[Enter] Play  [a] Queue  [d] Download  [s] Played",
+            View::Queue => "[Enter] Play  [x] Remove  [n] Skip",
+            View::Search => "type to search  [Enter] Search/Subscribe  [Esc] Back",
+            View::Settings => "config via --config <file>",
+        };
+        let help_text = format!("{view_hint}  |  [?] Help  [q] Quit");
 
         let help = Paragraph::new(help_text)
             .style(Style::default().fg(Color::DarkGray))

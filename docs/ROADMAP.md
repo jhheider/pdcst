@@ -302,17 +302,21 @@ for its owner; the core loop closes end to end. Fixes landed this pass:
 - [x] **Live smoke test** committed at `scripts/smoke.exp` (drives the TUI in a
       pty via `expect`; manual, needs a terminal).
 
+- [x] **Auto-queue control surfaced.** A contextual footer shows the current
+      view's actions, so `[A] Auto-queue` is visible in the Subscriptions view
+      without opening Help; the first-run empty state also teaches "press 'A' on
+      a feed to auto-fill Up Next." (Decided: personal project, so the toggle
+      stays opt-in rather than defaulted on.)
+
 Remaining for a public release (Jacob's calls, not built):
 
 - Version reset, name unification, release workflow (above).
-- Make the auto-queue discoverable/defaulted (it defaults off; `A` is only in
-  `?`/Settings). Either default it on or hint `A` in the first-run empty state.
 - Config discoverability: `Config` only loads from `--config <file>`; add
   `--print-config` or write a commented default on first run.
-- Decide public-vs-personal. Agent recommendation: ship as a personal tool
-  others can build ("runs well for me, PRs welcome, no support"), not a
-  supported product - the scope is right, the remaining gaps are honesty and a
-  few papercuts, not capability.
+- **Public-vs-personal: decided - personal.** Ships as a personal tool others
+  can build ("runs well for me, PRs welcome, no support"). The `wsola` crate,
+  however, will likely be released independently on crates.io (it is generally
+  useful and standalone).
 
 Cosmetic papercuts (deferred): emoji in headers (cross-terminal width),
 per-view footer hints, `Modal::Confirm` is still dead (render + a TODO handler),
