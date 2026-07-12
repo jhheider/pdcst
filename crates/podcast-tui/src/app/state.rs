@@ -1,15 +1,38 @@
-use crate::app::events::EventBus;
+use crate::app::events::{EventBus, StateEvent};
 use crate::artwork::ArtworkManager;
 use crate::audio::{AudioPlayer, AudioStreamer};
 use crate::download::DownloadManager;
 use crate::feed::{FeedRefresher, PodcastSearch, SearchResult};
 use crate::models::Config;
-use crate::models::{Episode, Subscription};
+use crate::models::{Episode, PlaybackStatus, Subscription};
 use crate::queue::QueueManager;
 use crate::storage::Database;
+use crate::storage::db::PlaybackState;
 use anyhow::Result;
-use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// How long a transient status message stays on screen before it auto-clears.
+const STATUS_TTL: Duration = Duration::from_secs(2);
+
+/// A one-line status message shown at the bottom of the screen.
+///
+/// Transient messages carry an expiry so they clear themselves at render time
+/// (replacing the old pattern of blocking the event loop with `sleep(2s)`).
+/// Persistent messages (`expires_at == None`) stay until explicitly cleared -
+/// used for "Loading..." while an episode fetch is in flight.
+pub struct StatusMessage {
+    pub text: String,
+    expires_at: Option<Instant>,
+}
+
+impl StatusMessage {
+    /// Whether this message's TTL has elapsed as of `now`. Persistent messages
+    /// (no expiry) never expire.
+    fn is_expired(&self, now: Instant) -> bool {
+        self.expires_at.is_some_and(|expires_at| now >= expires_at)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum View {
@@ -47,7 +70,7 @@ pub struct AppState {
     pub modal: Modal,
     pub search_input: String,
     pub search_cursor: usize,
-    pub status_message: Option<String>,
+    pub status_message: Option<StatusMessage>,
     pub show_help: bool,
 
     // Data
@@ -171,8 +194,15 @@ impl AppState {
     pub async fn toggle_playback(&mut self) -> Result<()> {
         if self.is_playing {
             self.audio_player.pause().await;
-        } else if let Some(_episode) = &self.current_episode {
+            // Checkpoint on pause so a mid-episode pause survives a quit.
+            self.save_progress().await;
+        } else if self.audio_player.get_current_episode().await.is_some() {
+            // Episode already loaded (paused mid-listen) - just resume.
             self.audio_player.play().await;
+        } else if let Some(episode) = self.current_episode.clone() {
+            // Nothing loaded yet (e.g. a restored last-session episode) - load
+            // and resume from the saved position.
+            self.play_episode(episode).await?;
         }
         Ok(())
     }
@@ -220,43 +250,37 @@ impl AppState {
         Ok(())
     }
 
+    /// Start playing an episode, resuming from its saved position if any.
+    ///
+    /// The audio fetch (a whole-body HTTP download or a file read) runs in a
+    /// spawned task so it never blocks the event loop - the UI stays responsive
+    /// while "Loading..." shows. When the fetch completes, the audio player
+    /// publishes `PlaybackStarted`, which clears the loading status; a failure
+    /// publishes `PlaybackError`, which surfaces as an error modal.
     async fn play_episode(&mut self, episode: Episode) -> Result<()> {
         tracing::info!("Playing episode: {}", episode.title);
 
-        // 1. Load audio data (from file or stream)
-        let audio_data = if episode.is_downloaded() {
-            // Load from local file
-            let path = episode
-                .local_path
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Downloaded episode missing local_path"))?;
+        // Resume where we left off (0 for a fresh episode).
+        let start = Duration::from_secs(episode.playback_position_seconds.max(0) as u64);
 
-            tracing::debug!("Loading audio from file: {}", path.display());
-            let state = self
-                .audio_streamer
-                .load_from_file(episode.id, Path::new(path))
-                .await?;
-            state.get_buffer().await
-        } else {
-            // Stream from URL
-            tracing::debug!("Streaming audio from URL: {}", episode.url);
-            let state = self
-                .audio_streamer
-                .stream_episode(episode.id, &episode.url)
-                .await?;
-            state.get_buffer().await
-        };
-
-        // 2. Play through audio player (from the top; resume is wired later)
-        self.audio_player
-            .play_from_memory(episode.id, &audio_data, std::time::Duration::ZERO)
-            .await?;
-
-        // 3. Update app state
+        // Reflect the selection immediately; the load happens off the loop.
         self.current_episode = Some(episode.clone());
-        self.is_playing = true;
+        self.playback_position = start.as_secs_f64();
+        self.set_status_persistent(format!("Loading {}...", episode.title));
 
-        tracing::info!("Playback started successfully for: {}", episode.title);
+        let audio_player = self.audio_player.clone();
+        let audio_streamer = self.audio_streamer.clone();
+        let event_bus = self.event_bus.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = load_and_play(&audio_player, &audio_streamer, &episode, start).await {
+                tracing::error!("Failed to play '{}': {}", episode.title, e);
+                event_bus.publish(StateEvent::PlaybackError {
+                    error: e.to_string(),
+                });
+            }
+        });
+
         Ok(())
     }
 
@@ -558,12 +582,44 @@ impl AppState {
         self.modal = Modal::None;
     }
 
+    /// Show a transient status message that auto-clears after [`STATUS_TTL`].
+    /// Does not block the event loop; expiry happens at render time.
     pub fn set_status(&mut self, message: String) {
-        self.status_message = Some(message);
+        self.status_message = Some(StatusMessage {
+            text: message,
+            expires_at: Some(Instant::now() + STATUS_TTL),
+        });
+    }
+
+    /// Show a status message that stays until explicitly cleared (e.g.
+    /// "Loading..." while an episode fetch is in flight, which can outlast the
+    /// transient TTL).
+    pub fn set_status_persistent(&mut self, message: String) {
+        self.status_message = Some(StatusMessage {
+            text: message,
+            expires_at: None,
+        });
     }
 
     pub fn clear_status(&mut self) {
         self.status_message = None;
+    }
+
+    /// The status text to display, or `None` if there is no live message.
+    pub fn current_status(&self) -> Option<&str> {
+        self.status_message.as_ref().map(|s| s.text.as_str())
+    }
+
+    /// Clear the status message if its TTL has elapsed. Returns `true` when a
+    /// message was cleared, signalling the caller to redraw.
+    pub fn expire_status(&mut self) -> bool {
+        if let Some(status) = &self.status_message
+            && status.is_expired(Instant::now())
+        {
+            self.status_message = None;
+            return true;
+        }
+        false
     }
 
     // Search input methods
@@ -599,6 +655,67 @@ impl AppState {
         }
 
         self.queue_items = episodes;
+        Ok(())
+    }
+
+    // Playback persistence (resume)
+
+    /// Persist the current playback position so it survives a pause or quit.
+    ///
+    /// Writes both the per-episode position (what a later replay resumes from)
+    /// and the singleton `playback_state` (which episode was last playing, plus
+    /// rate/volume, for restore-on-launch). A no-op when nothing is loaded.
+    pub async fn save_progress(&self) {
+        let Some(episode) = &self.current_episode else {
+            return;
+        };
+        let position = self.audio_player.get_position().await;
+
+        if let Err(e) = self
+            .db
+            .update_episode_playback_position(episode.id, position as i64)
+            .await
+        {
+            tracing::warn!("Failed to persist episode position: {}", e);
+        }
+
+        let status = if self.audio_player.is_playing().await {
+            PlaybackStatus::Playing
+        } else {
+            PlaybackStatus::Paused
+        };
+        let state = PlaybackState {
+            current_episode_id: Some(episode.id),
+            position_seconds: position,
+            playback_rate: self.audio_player.get_speed().await,
+            volume: self.audio_player.get_volume().await,
+            status,
+        };
+        if let Err(e) = self.db.update_playback_state(&state).await {
+            tracing::warn!("Failed to persist playback state: {}", e);
+        }
+    }
+
+    /// Restore the last session's episode (without auto-playing) so the app
+    /// reopens showing where you left off; press play to resume from there.
+    pub async fn restore_playback_state(&mut self) -> Result<()> {
+        let saved = self.db.get_playback_state().await?;
+        if let Some(episode_id) = saved.current_episode_id
+            && let Some(episode) = self.db.get_episode(episode_id).await?
+        {
+            tracing::info!(
+                "Restoring last episode '{}' at {:.0}s",
+                episode.title,
+                saved.position_seconds
+            );
+            self.current_episode = Some(episode);
+            self.playback_position = saved.position_seconds;
+            self.playback_speed = saved.playback_rate;
+            self.volume = saved.volume;
+            // Push restored settings to the player so a resume uses them.
+            self.audio_player.set_speed(saved.playback_rate).await;
+            self.audio_player.set_volume(saved.volume).await;
+        }
         Ok(())
     }
 
@@ -647,5 +764,68 @@ impl AppState {
         tracing::info!("Deleting download for: {}", episode.title);
         self.download_manager.delete_download(episode).await?;
         Ok(())
+    }
+}
+
+/// Start an episode playing from `start`, choosing the source: a downloaded
+/// episode plays straight from its on-disk file; a remote one streams to disk
+/// and starts as soon as a prebuffer lands. Both decode off disk - nothing is
+/// buffered wholesale in memory. Runs off the event loop (a spawned task or the
+/// auto-advance task), so the prebuffer wait never freezes the UI.
+pub(crate) async fn load_and_play(
+    audio_player: &AudioPlayer,
+    audio_streamer: &AudioStreamer,
+    episode: &Episode,
+    start: Duration,
+) -> Result<()> {
+    if episode.is_downloaded() {
+        let path = episode
+            .local_path
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Downloaded episode missing local_path"))?;
+        tracing::debug!("Playing from downloaded file: {}", path.display());
+        audio_player
+            .play_from_file(episode.id, path.clone(), start)
+            .await
+    } else {
+        tracing::debug!("Streaming to disk from URL: {}", episode.url);
+        let reader = audio_streamer.open_stream(episode.id, &episode.url).await?;
+        audio_player.play_stream(episode.id, reader, start).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transient_status_expires_after_ttl() {
+        let now = Instant::now();
+        let msg = StatusMessage {
+            text: "Added to queue".to_string(),
+            expires_at: Some(now + STATUS_TTL),
+        };
+
+        assert!(!msg.is_expired(now), "should be live immediately");
+        assert!(
+            !msg.is_expired(now + STATUS_TTL - Duration::from_millis(1)),
+            "should still be live just before the TTL"
+        );
+        assert!(
+            msg.is_expired(now + STATUS_TTL),
+            "should be expired once the TTL elapses"
+        );
+    }
+
+    #[test]
+    fn persistent_status_never_expires() {
+        let now = Instant::now();
+        let msg = StatusMessage {
+            text: "Loading...".to_string(),
+            expires_at: None,
+        };
+
+        assert!(!msg.is_expired(now));
+        assert!(!msg.is_expired(now + Duration::from_secs(3600)));
     }
 }
