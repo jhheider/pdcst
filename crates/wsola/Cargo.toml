@@ -1,0 +1,10 @@
+[package]
+name = "wsola"
+version = "0.1.0"
+description = "Pitch-preserved audio time-stretch (WSOLA), pure Rust, no C"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]

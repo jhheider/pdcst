@@ -1,0 +1,49 @@
+[package]
+name = "podcast-tui"
+version = "1.0.0"
+description = "A fast, keyboard-driven terminal podcast player"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+ratatui.workspace = true
+crossterm.workspace = true
+ratatui-image.workspace = true
+image.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-util.workspace = true
+rodio.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+rss.workspace = true
+quick-xml.workspace = true
+opml.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+dirs.workspace = true
+url.workspace = true
+bytes.workspace = true
+futures.workspace = true
+urlencoding.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+mockito.workspace = true
+proptest.workspace = true
+
+[[bin]]
+name = "podcast-tui"
+path = "src/main.rs"
