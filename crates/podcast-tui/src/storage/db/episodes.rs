@@ -87,6 +87,19 @@ impl Database {
         self.parse_episodes(rows)
     }
 
+    /// Whether an episode with this guid already exists for the subscription.
+    /// Used to tell a genuinely-new episode from a re-seen one on refresh (the
+    /// `INSERT OR REPLACE` in `insert_episode` cannot distinguish them).
+    pub async fn episode_exists(&self, subscription_id: Uuid, guid: &str) -> Result<bool> {
+        let row =
+            sqlx::query("SELECT 1 FROM episodes WHERE subscription_id = ? AND guid = ? LIMIT 1")
+                .bind(subscription_id.to_string())
+                .bind(guid)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.is_some())
+    }
+
     pub async fn get_episode(&self, id: Uuid) -> Result<Option<Episode>> {
         let row = sqlx::query(
             r#"

@@ -20,6 +20,29 @@ impl Database {
         Ok(())
     }
 
+    /// Insert an item at a logical `position`, shifting everything at or after
+    /// it down by one so the queue stays contiguous and ordered. Used by
+    /// auto-enqueue to unshift (top) or insert mid-queue for interleaving.
+    pub async fn insert_into_queue_at(&self, item: &QueueItem, position: i64) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("UPDATE queue_items SET position = position + 1 WHERE position >= ?")
+            .bind(position)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO queue_items (id, episode_id, position, priority, added_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(item.id.to_string())
+        .bind(item.episode_id.to_string())
+        .bind(position)
+        .bind(item.priority.as_str())
+        .bind(item.added_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn get_queue(&self) -> Result<Vec<QueueItem>> {
         let rows = sqlx::query(
             "SELECT id, episode_id, position, priority, added_at FROM queue_items ORDER BY position"

@@ -201,27 +201,28 @@ dead `PlaybackPanel`/alt keymap (do the subtraction, skip the adoption).
 Build the five requirements from the top of this doc. This is the reason the app
 exists; do not treat it as a nice-to-have.
 
-Design sketch (confirm details as you build):
-- **Schema.** A `queue` table (position-ordered, references episode); per-episode
-  listen state on `episodes` (played, position_seconds already exist; add
-  in-progress/added-to-queue as needed); per-subscription auto-add config
-  (`auto_add: none|top|bottom`) + global settings (`queue_max_depth`, global
-  default auto-add, smart-shuffle on/off).
-- **Publish-time hook.** When `FeedRefresher` ingests a new, unplayed episode for
-  a sub with auto-add enabled, enqueue it (push or unshift per the sub's rule),
-  respecting `queue_max_depth` (do not exceed it) and never displacing the
-  current item.
-- **Smart interleave.** When inserting (or on a re-balance pass), avoid two
-  adjacent episodes of the same podcast: insert at the nearest legal position, or
-  reorder the not-yet-current tail. Keep the algorithm simple and deterministic;
-  the current item is fixed.
-- **Completion -> advance.** On `PlaybackCompleted`: mark played, remove from
-  queue, advance to the next (a basic version already exists in `app/mod.rs`;
-  fold it into the queue manager and make it respect listen state).
-- **Listen state everywhere.** Episode lists show unplayed/in-progress/played;
-  auto-add only unplayed; resume uses the saved position (Phase A Stage 4).
-- Depends on: a working editable queue (Phase B), resume/listen-state (Phase A),
-  and refresh (Phase D) as the trigger source.
+- [x] **PR 1 - schema + config.** Per-subscription `auto_queue_to_top` column
+      (migration `20250712000001`) + `Subscription` field; global `Config`
+      settings `queue_max_depth` (20), `auto_queue_to_top_default`,
+      `smart_interleave`. Per-episode listen state (played, position) already
+      exists from Phase A; the in-progress marker shipped in Phase B PR 2.
+- [x] **PR 2 - publish-time enqueue hook + smart interleave.** `refresh_feed`
+      now detects genuinely-new episodes (via `Database::episode_exists`, which
+      also fixes the inflated `new_episodes` count) and, for an `auto_queue`
+      feed, calls `QueueManager::auto_enqueue`. That pushes/unshifts per the
+      sub's rule, respects `queue_max_depth` (skips when full), never displaces
+      the current item (reads `playback_state` to protect the head, inserting via
+      the new `insert_into_queue_at`), and smart-interleaves via the pure
+      `nearest_legal_position` (no two adjacent episodes of the same podcast).
+      Unit-tested (`nearest_legal_position`) + integration-tested (`auto_enqueue`
+      push/unshift/max-depth/never-clobber/interleave).
+- [ ] **PR 3 - per-sub toggle UI + settings view + completion fold.** Bind a key
+      to toggle a sub's `auto_queue` / direction; show the config in Settings;
+      fold the completion advance (`app/auto_advance.rs`) and `n` into one
+      `QueueManager` path that marks played + removes + advances, respecting
+      listen state (auto-add only unplayed - already true, since new == unplayed).
+- Depends on: a working editable queue (Phase B, done), resume/listen-state
+  (Phase A, done), and refresh (Phase D) as the trigger source.
 
 ### Phase D - refresh scheduling
 

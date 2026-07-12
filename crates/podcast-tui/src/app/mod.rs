@@ -61,6 +61,11 @@ impl App {
             config.max_concurrent_refreshes,
             db.clone(),
             event_bus.clone(),
+            queue_manager.clone(),
+            crate::feed::AutoQueuePolicy {
+                max_depth: config.queue_max_depth,
+                interleave: config.smart_interleave,
+            },
         ));
         let podcast_search = Arc::new(PodcastSearch::new());
 

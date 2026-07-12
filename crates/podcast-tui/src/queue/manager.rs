@@ -1,5 +1,6 @@
 use crate::app::events::{EventBus, StateEvent};
 use crate::models::{Episode, QueueItem};
+use crate::queue::ordering::nearest_legal_position;
 use crate::storage::Database;
 use anyhow::Result;
 use std::sync::Arc;
@@ -33,6 +34,61 @@ impl QueueManager {
         self.event_bus.publish(StateEvent::QueueUpdated);
 
         Ok(())
+    }
+
+    /// Auto-add a newly-published episode to the queue (the publish-time hook).
+    ///
+    /// - `to_top`: unshift to the front vs push to the back.
+    /// - `max_depth`: skip if the queue already holds this many (0 = unlimited).
+    /// - `interleave`: avoid placing two episodes of the same podcast adjacent.
+    ///
+    /// The currently-playing episode (the queue head, when the player has it
+    /// loaded) is never displaced: auto-fill happens around it. Returns whether
+    /// the episode was enqueued.
+    pub async fn auto_enqueue(
+        &self,
+        episode: &Episode,
+        to_top: bool,
+        max_depth: usize,
+        interleave: bool,
+    ) -> Result<bool> {
+        let entries = self.get_queue_with_episodes().await?;
+
+        if max_depth > 0 && entries.len() >= max_depth {
+            return Ok(false); // queue full: do not exceed the cap
+        }
+        if entries.iter().any(|(_, ep)| ep.id == episode.id) {
+            return Ok(false); // already queued
+        }
+
+        // Protect the current item: if the queue head is what the player has
+        // loaded, never insert before it.
+        let protect_head = match entries.first() {
+            Some((head, _)) => {
+                self.db
+                    .get_playback_state()
+                    .await
+                    .ok()
+                    .and_then(|state| state.current_episode_id)
+                    == Some(head.episode_id)
+            }
+            None => false,
+        };
+        let floor = usize::from(protect_head);
+
+        let subs: Vec<Uuid> = entries.iter().map(|(_, ep)| ep.subscription_id).collect();
+        let mut position = if to_top { floor } else { subs.len() };
+        if interleave {
+            position =
+                nearest_legal_position(&subs, episode.subscription_id, position, floor, to_top);
+        }
+
+        let item = QueueItem::new(episode.id, position as i64);
+        self.db.insert_into_queue_at(&item, position as i64).await?;
+        tracing::info!("Auto-enqueued '{}' at position {}", episode.title, position);
+
+        self.event_bus.publish(StateEvent::QueueUpdated);
+        Ok(true)
     }
 
     pub async fn remove_episode(&self, episode_id: Uuid) -> Result<()> {
