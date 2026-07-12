@@ -126,40 +126,61 @@ it is foundational.
 ### Phase B - make it usable (the UX pass)
 
 Reference: PocketCasts for Mac is installed (Electron, DOM-inspectable) - mine it
-for the interaction model and keybindings. Use the `tui-ux` agent. Findings from
-the audit, most-severe first:
+for the interaction model and keybindings. Informed by the `product-designer` and
+`tui-ux` agents (2026-07-12), which converged: the Phase B bar is not "usable app"
+in the abstract, it is "the Up Next queue is inspectable, operable, and
+trustworthy, and I can never fall into a broken input state." Sequenced into PRs,
+tier-1 (the gate into Phase C) first.
 
-- [ ] **Subscribe from the running app.** `subscribe_from_search_result`
-      (`app/state.rs`) is fully written and never called; Enter in Search re-runs
-      the search instead. Bind it. This is the #1 gap - a fresh install has no
-      in-app path to add a podcast.
-- [ ] **Fix list navigation in Queue/Search/Settings.** `next_item`,
-      `goto_bottom`, `page_down` (`app/state.rs`) fall through to `_ => 0` for
-      those views, so `j`/`Down`/`G` are no-ops there. `select_item` also only
-      handles Subscriptions/Episodes.
-- [ ] **List scrolling.** No `ListState`/`render_stateful_widget` anywhere; the
-      `scroll_offset` field is written once and never read, so long lists cannot
-      scroll and the selection leaves the screen.
-- [ ] **Editable queue.** `QueueManager` has `remove_episode`/`move_up`/
-      `move_down`; none are bound. Bind Enter=play-this, `x`/`d`=remove,
-      reorder keys. (This is the seed of the auto-queue UI.)
-- [ ] **Playback bar.** Show elapsed/duration (`12:34 / 45:00`), not just a
-      percent; mark the currently-playing episode in the list. A `PlaybackPanel`
-      component that formats exactly this exists but is dead code
-      (`ui/components/` is entirely unused - `ui/mod.rs` reinlines everything).
-- [ ] **Text-entry mode.** `q` and digits are captured globally, so you cannot
-      type them into the search box; the global quit/view-switch must not fire
-      while typing.
-- [ ] **Feedback & safety.** Surface download progress (currently only
-      `tracing::debug!`); `Modal::Confirm` is fully built but never constructed -
-      wire it so deleting a download confirms first.
-- [ ] **Kill the dead subsystems** (or adopt them): the 30-variant `PodcastError`
-      enum (app uses `anyhow`), `AppEvent`/`from_key_event` (a second unused
-      keymap), and `ui/components/*`. Four "built, tested, never wired" slices -
-      a fingerprint of iterative rewrites that never cleaned up.
-- [ ] Add a `TestBackend` smoke test per view so this rot cannot regrow (0 tests
-      currently touch `app/mod.rs` or `ui/mod.rs` - where every showstopper
-      lived).
+**PR 1 - input routing + view model (done, this PR):**
+- [x] **Text-entry no longer collides with global keys.** Quit is a
+      `should_quit` flag set in `handle_key_event` (not a raw `q` match in the run
+      loop), so a literal `q` while typing no longer quits the app; Ctrl-C is the
+      always-available hard quit. The search gate routes every printable key
+      (digits and `q` included) into the box; only Esc/Enter escape.
+- [x] **Unified view model.** Numbers 1-4 = Subscriptions/Queue/Search/Settings;
+      Tab/Shift-Tab cycle exactly those four (`next_top_view`/`prev_top_view`);
+      Episodes is a drill-down (Enter opens, Esc backs out), not a tab. Help modal
+      and footer reconciled to match.
+- [x] **List navigation works in every view.** `next_item`/`goto_bottom`/
+      `page_down` use one `max_index()` over the current view's list, fixing the
+      `_ => 0` no-ops in Queue/Search.
+
+**PR 2 - scrolling + display (next):**
+- [ ] **List scrolling.** Adopt `ListState` + `render_stateful_widget` as the one
+      selection+scroll mechanism (render takes `&mut AppState`); delete the
+      hand-rolled per-item `bg(DarkGray)` highlight; use `Modifier::REVERSED` and
+      honor `NO_COLOR`. `scroll_offset` field goes away.
+- [ ] **State visibility.** Mark the now-playing episode in lists; show
+      unplayed/in-progress/played per row (`Episode::progress_percentage`);
+      elapsed/duration (`12:34 / 45:00`) in the playback bar, not a bare percent;
+      queue depth in the footer.
+- [ ] **Panic-safe terminal restore** (Drop guard / panic hook); drop the unused
+      `EnableMouseCapture`; first-run guidance on an empty Subscriptions view.
+
+**PR 3 - queue + search operability (the Phase C surface):**
+- [ ] **Subscribe from the running app.** Search focus model (typing vs browsing
+      results); Enter on a result calls `subscribe_from_search_result`. The #1 gap.
+- [ ] **Editable, operable queue.** `select_item` Queue arm = play-this; `x` =
+      `QueueManager::remove_episode`; reorder keys optional.
+- [ ] **Define skip/advance once.** Fold `n` (`play_next_in_queue`) and the
+      completion path into a single `QueueManager` advance that marks played +
+      removes + advances, with the current item as the protected head. Today `n`
+      can replay the current episode (current-vs-head is undefined).
+- [ ] **Un-freeze refresh + search.** `refresh_*` and `search_podcasts` are still
+      `.await`ed inside the key handler, freezing the UI on every network call;
+      spawn them off-loop like `play_episode` and drive the existing
+      FeedRefresh/Download events into visible indicators.
+
+**Deferred / cut** (agents agreed): `Modal::Confirm` for delete (streaming-first,
+`delete_on_finish` already reclaims; ceremony for a single user); download-progress
+UI; manual queue reorder (smart-interleave is the ordering story); adopting the
+dead `PlaybackPanel`/alt keymap (do the subtraction, skip the adoption).
+- [ ] **Delete the dead subsystems** (subtraction only): 30-variant `PodcastError`
+      (app uses `anyhow`), `AppEvent`/`from_key_event` (second unused keymap),
+      `ui/components/*`. Its own no-behavior-change PR.
+- [ ] Add a `TestBackend` smoke test per view once `ListState` lands, targeting
+      the input-routing/queue-operability paths where showstoppers cluster.
 
 ### Phase C - the auto-queue (THE DEAL)
 
