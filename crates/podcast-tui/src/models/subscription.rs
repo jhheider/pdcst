@@ -46,7 +46,12 @@ pub struct Subscription {
     pub artwork_path: Option<PathBuf>,
     #[serde(default)]
     pub categories: Vec<String>,
+    /// When true, new episodes from this feed are auto-added to the queue.
     pub auto_queue: bool,
+    /// Auto-add direction: true = prepend to the top (unshift), false = append
+    /// to the bottom (push). Only meaningful when `auto_queue` is set.
+    #[serde(default)]
+    pub auto_queue_to_top: bool,
     pub priority: SubscriptionPriority,
     pub auto_download: bool,
     pub last_refreshed: DateTime<Utc>,
@@ -67,6 +72,7 @@ impl Subscription {
             artwork_path: None,
             categories: Vec::new(),
             auto_queue: false,
+            auto_queue_to_top: false,
             priority: SubscriptionPriority::Medium,
             auto_download: false,
             last_refreshed: now,

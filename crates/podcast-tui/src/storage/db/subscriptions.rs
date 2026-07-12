@@ -18,8 +18,9 @@ impl Database {
             r#"
             INSERT INTO subscriptions
             (id, title, description, author, rss_url, website_url, artwork_url, artwork_path,
-             categories, auto_queue, priority, auto_download, last_refreshed, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             categories, auto_queue, auto_queue_to_top, priority, auto_download,
+             last_refreshed, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(sub.id.to_string())
@@ -32,6 +33,7 @@ impl Database {
         .bind(artwork_path)
         .bind(categories_json)
         .bind(sub.auto_queue)
+        .bind(sub.auto_queue_to_top)
         .bind(sub.priority.as_str())
         .bind(sub.auto_download)
         .bind(sub.last_refreshed)
@@ -47,8 +49,8 @@ impl Database {
         let rows = sqlx::query(
             r#"
             SELECT id, title, description, author, rss_url, website_url, artwork_url,
-                   artwork_path, categories, auto_queue, priority, auto_download,
-                   last_refreshed, created_at
+                   artwork_path, categories, auto_queue, auto_queue_to_top, priority,
+                   auto_download, last_refreshed, created_at
             FROM subscriptions
             ORDER BY title
             "#,
@@ -74,6 +76,7 @@ impl Database {
                 artwork_path: artwork_path.map(|p| p.into()),
                 categories,
                 auto_queue: row.try_get("auto_queue")?,
+                auto_queue_to_top: row.try_get("auto_queue_to_top")?,
                 priority: row.try_get::<String, _>("priority")?.parse().unwrap(),
                 auto_download: row.try_get("auto_download")?,
                 last_refreshed: row.try_get("last_refreshed")?,
@@ -88,8 +91,8 @@ impl Database {
         let row = sqlx::query(
             r#"
             SELECT id, title, description, author, rss_url, website_url, artwork_url,
-                   artwork_path, categories, auto_queue, priority, auto_download,
-                   last_refreshed, created_at
+                   artwork_path, categories, auto_queue, auto_queue_to_top, priority,
+                   auto_download, last_refreshed, created_at
             FROM subscriptions
             WHERE id = ?
             "#,
@@ -115,6 +118,7 @@ impl Database {
                 artwork_path: artwork_path.map(|p| p.into()),
                 categories,
                 auto_queue: row.try_get("auto_queue")?,
+                auto_queue_to_top: row.try_get("auto_queue_to_top")?,
                 priority: row.try_get::<String, _>("priority")?.parse().unwrap(),
                 auto_download: row.try_get("auto_download")?,
                 last_refreshed: row.try_get("last_refreshed")?,

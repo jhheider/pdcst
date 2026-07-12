@@ -106,6 +106,17 @@ pub struct Config {
     #[serde(default = "default_max_cache_megabytes")]
     pub max_cache_megabytes: u64,
 
+    // Auto-queue (Phase C). Global defaults; per-subscription `auto_queue` /
+    // `auto_queue_to_top` override the direction.
+    #[serde(default = "default_queue_max_depth")]
+    pub queue_max_depth: usize,
+    /// Default auto-add direction for feeds that do not override it: true = top.
+    #[serde(default)]
+    pub auto_queue_to_top_default: bool,
+    /// Avoid two adjacent episodes of the same podcast when auto-filling.
+    #[serde(default = "default_true")]
+    pub smart_interleave: bool,
+
     // Position saving
     #[serde(default = "default_save_position_interval")]
     pub save_position_interval_seconds: u64,
@@ -152,6 +163,10 @@ fn default_max_cache_megabytes() -> u64 {
     4096
 }
 
+fn default_queue_max_depth() -> usize {
+    20
+}
+
 fn default_auto_refresh() -> u64 {
     60
 }
@@ -191,6 +206,9 @@ impl Default for Config {
             delete_on_finish: true,
             max_cache_episodes: default_max_cache_episodes(),
             max_cache_megabytes: default_max_cache_megabytes(),
+            queue_max_depth: default_queue_max_depth(),
+            auto_queue_to_top_default: false,
+            smart_interleave: true,
             save_position_interval_seconds: default_save_position_interval(),
             auto_refresh_interval_minutes: default_auto_refresh(),
             max_concurrent_refreshes: default_concurrent_refreshes(),

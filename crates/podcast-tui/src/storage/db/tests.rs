@@ -118,6 +118,27 @@ async fn test_insert_and_get_subscription() {
 }
 
 #[tokio::test]
+async fn test_auto_queue_config_roundtrips() {
+    let (db, _temp) = create_test_db().await;
+
+    let mut top = create_test_subscription("Top", "https://example.com/top.xml");
+    top.auto_queue = true;
+    top.auto_queue_to_top = true;
+    db.insert_subscription(&top).await.unwrap();
+    let got = db.get_subscription(top.id).await.unwrap().unwrap();
+    assert!(got.auto_queue);
+    assert!(got.auto_queue_to_top, "top direction persists");
+
+    // The direction defaults to bottom (false).
+    let mut bottom = create_test_subscription("Bottom", "https://example.com/bottom.xml");
+    bottom.auto_queue = true;
+    db.insert_subscription(&bottom).await.unwrap();
+    let got = db.get_subscription(bottom.id).await.unwrap().unwrap();
+    assert!(got.auto_queue);
+    assert!(!got.auto_queue_to_top, "direction defaults to bottom");
+}
+
+#[tokio::test]
 async fn test_get_all_subscriptions() {
     let (db, _temp) = create_test_db().await;
 
