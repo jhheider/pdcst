@@ -1,12 +1,12 @@
 pub mod components;
 
-use crate::app::{state::View, state::Modal, AppState};
+use crate::app::{AppState, state::Modal, state::View};
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Wrap},
-    Frame,
 };
 
 pub struct Ui;
@@ -97,7 +97,7 @@ impl Ui {
                 let icon = if state
                     .current_subscription
                     .as_ref()
-                    .map_or(false, |s| s.id == sub.id)
+                    .is_some_and(|s| s.id == sub.id)
                 {
                     "▶ "
                 } else {
@@ -113,11 +113,12 @@ impl Ui {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::White))
-                    .title(format!(
-                        " Subscriptions ({}) ",
-                        state.subscriptions.len()
-                    ))
-                    .title_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    .title(format!(" Subscriptions ({}) ", state.subscriptions.len()))
+                    .title_style(
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
             )
             .highlight_style(
                 Style::default()
@@ -175,7 +176,11 @@ impl Ui {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::White))
                     .title(format!(" {} ({}) ", title, state.episodes.len()))
-                    .title_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    .title_style(
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
             )
             .highlight_style(
                 Style::default()
@@ -202,7 +207,9 @@ impl Ui {
                     .border_style(Style::default().fg(Color::White))
                     .title(" Queue (0) ")
                     .title_style(
-                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
                     ),
             );
 
@@ -238,7 +245,11 @@ impl Ui {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::White))
                     .title(format!(" Queue ({}) ", state.queue_items.len()))
-                    .title_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    .title_style(
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
             )
             .highlight_style(
                 Style::default()
@@ -266,7 +277,11 @@ impl Ui {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Cyan))
                     .title(" 🔍 Search Podcasts (iTunes) ")
-                    .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    .title_style(
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
             );
 
         f.render_widget(input, chunks[0]);
@@ -300,7 +315,9 @@ impl Ui {
                     .border_style(Style::default().fg(Color::White))
                     .title(" Results (0) ")
                     .title_style(
-                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
                     ),
             );
 
@@ -333,7 +350,9 @@ impl Ui {
                         .border_style(Style::default().fg(Color::White))
                         .title(format!(" Results ({}) ", state.search_results.len()))
                         .title_style(
-                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
                         ),
                 )
                 .highlight_style(
@@ -367,11 +386,17 @@ impl Ui {
                 Style::default().fg(Color::White),
             )),
             Line::from(Span::styled(
-                format!("Downloads: {} concurrent", state.config.max_concurrent_downloads),
+                format!(
+                    "Downloads: {} concurrent",
+                    state.config.max_concurrent_downloads
+                ),
                 Style::default().fg(Color::White),
             )),
             Line::from(Span::styled(
-                format!("Refreshes: {} concurrent", state.config.max_concurrent_refreshes),
+                format!(
+                    "Refreshes: {} concurrent",
+                    state.config.max_concurrent_refreshes
+                ),
                 Style::default().fg(Color::White),
             )),
             Line::from(""),
@@ -387,7 +412,11 @@ impl Ui {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::White))
                     .title(" Settings ")
-                    .title_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    .title_style(
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
             )
             .wrap(Wrap { trim: true });
 
@@ -406,7 +435,11 @@ impl Ui {
 
         // Playback status line
         let status_text = if let Some(episode) = &state.current_episode {
-            let status_icon = if state.is_playing { "▶️ " } else { "⏸️ " };
+            let status_icon = if state.is_playing {
+                "▶️ "
+            } else {
+                "⏸️ "
+            };
             format!(
                 "{}{} | Speed: {:.1}x | Volume: {:.0}%",
                 status_icon,
@@ -499,7 +532,10 @@ impl Ui {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
-            Line::from(Span::styled("Navigation:", Style::default().fg(Color::Cyan))),
+            Line::from(Span::styled(
+                "Navigation:",
+                Style::default().fg(Color::Cyan),
+            )),
             Line::from("  j/↓      Move down"),
             Line::from("  k/↑      Move up"),
             Line::from("  g        Go to top"),
@@ -587,11 +623,7 @@ impl Ui {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Red))
                     .title(" Error ")
-                    .title_style(
-                        Style::default()
-                            .fg(Color::Red)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    .title_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
             )
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true });

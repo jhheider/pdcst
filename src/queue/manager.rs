@@ -62,11 +62,10 @@ impl QueueManager {
             .iter()
             .enumerate()
             .find(|(_, item)| item.episode_id == episode_id)
+            && index > 0
         {
-            if index > 0 {
-                let new_position = index as i64 - 1;
-                self.move_episode(episode_id, new_position).await?;
-            }
+            let new_position = index as i64 - 1;
+            self.move_episode(episode_id, new_position).await?;
         }
 
         Ok(())
@@ -79,11 +78,10 @@ impl QueueManager {
             .iter()
             .enumerate()
             .find(|(_, item)| item.episode_id == episode_id)
+            && index < queue.len() - 1
         {
-            if index < queue.len() - 1 {
-                let new_position = index as i64 + 1;
-                self.move_episode(episode_id, new_position).await?;
-            }
+            let new_position = index as i64 + 1;
+            self.move_episode(episode_id, new_position).await?;
         }
 
         Ok(())

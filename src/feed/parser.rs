@@ -78,10 +78,10 @@ impl FeedParser {
         }
 
         // Try to get duration from iTunes extension
-        if let Some(itunes) = item.itunes_ext() {
-            if let Some(duration_str) = itunes.duration() {
-                episode.duration_seconds = Self::parse_duration(duration_str);
-            }
+        if let Some(itunes) = item.itunes_ext()
+            && let Some(duration_str) = itunes.duration()
+        {
+            episode.duration_seconds = Self::parse_duration(duration_str);
         }
 
         Some(episode)

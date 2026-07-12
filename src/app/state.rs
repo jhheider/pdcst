@@ -55,7 +55,7 @@ pub struct AppState {
     pub episodes: Vec<Episode>,
     pub current_subscription: Option<Subscription>,
     pub search_results: Vec<SearchResult>,
-    pub queue_items: Vec<Episode>,  // Cached queue items
+    pub queue_items: Vec<Episode>, // Cached queue items
 
     // Playback state
     pub is_playing: bool,
@@ -65,19 +65,35 @@ pub struct AppState {
     pub volume: f32,
 }
 
+/// The shared services AppState is built from, grouped so AppState::new does not
+/// take a dozen positional Arc args (and so the call site reads by name).
+pub struct Services {
+    pub audio_player: Arc<AudioPlayer>,
+    pub audio_streamer: Arc<AudioStreamer>,
+    pub queue_manager: Arc<QueueManager>,
+    pub download_manager: Arc<DownloadManager>,
+    pub feed_refresher: Arc<FeedRefresher>,
+    pub podcast_search: Arc<PodcastSearch>,
+    pub artwork_manager: Arc<ArtworkManager>,
+}
+
 impl AppState {
     pub fn new(
         config: Config,
         db: Arc<Database>,
-        audio_player: Arc<AudioPlayer>,
-        audio_streamer: Arc<AudioStreamer>,
-        queue_manager: Arc<QueueManager>,
-        download_manager: Arc<DownloadManager>,
-        feed_refresher: Arc<FeedRefresher>,
-        podcast_search: Arc<PodcastSearch>,
-        artwork_manager: Arc<ArtworkManager>,
+        services: Services,
         event_bus: Arc<EventBus>,
     ) -> Self {
+        let Services {
+            audio_player,
+            audio_streamer,
+            queue_manager,
+            download_manager,
+            feed_refresher,
+            podcast_search,
+            artwork_manager,
+        } = services;
+
         // Note: Auto-advance logic has been moved to App to use event-driven architecture
         // instead of the old completion channel. This eliminates the zombie task issue.
 
@@ -274,9 +290,10 @@ impl AppState {
         self.db.insert_subscription(&subscription).await?;
 
         // Emit event
-        self.event_bus.publish(crate::app::events::StateEvent::SubscriptionAdded {
-            subscription_id: subscription.id
-        });
+        self.event_bus
+            .publish(crate::app::events::StateEvent::SubscriptionAdded {
+                subscription_id: subscription.id,
+            });
 
         // Reload subscriptions
         self.load_subscriptions().await?;
@@ -306,7 +323,9 @@ impl AppState {
 
     pub async fn restart_current_episode(&mut self) -> Result<()> {
         tracing::info!("Restarting current episode");
-        self.audio_player.seek_to(std::time::Duration::from_secs(0)).await?;
+        self.audio_player
+            .seek_to(std::time::Duration::from_secs(0))
+            .await?;
         Ok(())
     }
 
@@ -425,52 +444,51 @@ impl AppState {
     // Item action methods
 
     pub async fn add_selected_to_queue(&mut self) -> Result<()> {
-        if self.current_view == View::Episodes {
-            if let Some(episode) = self.episodes.get(self.selected_index) {
-                self.queue_manager.add_episode(episode.id).await?;
-                tracing::info!("Added '{}' to queue", episode.title);
-            }
+        if self.current_view == View::Episodes
+            && let Some(episode) = self.episodes.get(self.selected_index)
+        {
+            self.queue_manager.add_episode(episode.id).await?;
+            tracing::info!("Added '{}' to queue", episode.title);
         }
         Ok(())
     }
 
     pub async fn download_selected_episode(&mut self) -> Result<()> {
-        if self.current_view == View::Episodes {
-            if let Some(episode) = self.episodes.get(self.selected_index).cloned() {
-                tracing::info!("Downloading episode: {}", episode.title);
-                // Spawn download task to not block UI
-                let download_manager = self.download_manager.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = download_manager.download_episode(&episode).await {
-                        tracing::error!("Download failed: {}", e);
-                    }
-                });
-            }
+        if self.current_view == View::Episodes
+            && let Some(episode) = self.episodes.get(self.selected_index).cloned()
+        {
+            tracing::info!("Downloading episode: {}", episode.title);
+            // Spawn download task to not block UI
+            let download_manager = self.download_manager.clone();
+            tokio::spawn(async move {
+                if let Err(e) = download_manager.download_episode(&episode).await {
+                    tracing::error!("Download failed: {}", e);
+                }
+            });
         }
         Ok(())
     }
 
     pub async fn delete_selected_download(&mut self) -> Result<()> {
-        if self.current_view == View::Episodes {
-            if let Some(episode) = self.episodes.get(self.selected_index) {
-                if episode.is_downloaded() {
-                    self.delete_download(episode).await?;
-                    // Reload episodes to update UI
-                    if let Some(sub) = &self.current_subscription {
-                        self.load_episodes_for_subscription(sub.id).await?;
-                    }
-                }
+        if self.current_view == View::Episodes
+            && let Some(episode) = self.episodes.get(self.selected_index)
+            && episode.is_downloaded()
+        {
+            self.delete_download(episode).await?;
+            // Reload episodes to update UI
+            if let Some(sub) = &self.current_subscription {
+                self.load_episodes_for_subscription(sub.id).await?;
             }
         }
         Ok(())
     }
 
     pub async fn refresh_selected_subscription(&mut self) -> Result<()> {
-        if self.current_view == View::Subscriptions {
-            if let Some(subscription) = self.subscriptions.get(self.selected_index).cloned() {
-                tracing::info!("Refreshing subscription: {}", subscription.title);
-                self.feed_refresher.refresh_one(subscription).await?;
-            }
+        if self.current_view == View::Subscriptions
+            && let Some(subscription) = self.subscriptions.get(self.selected_index).cloned()
+        {
+            tracing::info!("Refreshing subscription: {}", subscription.title);
+            self.feed_refresher.refresh_one(subscription).await?;
         }
         Ok(())
     }
@@ -484,24 +502,29 @@ impl AppState {
     }
 
     pub async fn toggle_played_status(&mut self) -> Result<()> {
-        if self.current_view == View::Episodes {
-            if let Some(episode) = self.episodes.get(self.selected_index) {
-                let episode_id = episode.id;
-                let new_status = !episode.played;
-                self.db.mark_episode_played(episode_id, new_status).await?;
-                tracing::info!("Marked episode as {}", if new_status { "played" } else { "unplayed" });
+        if self.current_view == View::Episodes
+            && let Some(episode) = self.episodes.get(self.selected_index)
+        {
+            let episode_id = episode.id;
+            let new_status = !episode.played;
+            self.db.mark_episode_played(episode_id, new_status).await?;
+            tracing::info!(
+                "Marked episode as {}",
+                if new_status { "played" } else { "unplayed" }
+            );
 
-                // Emit event
-                if new_status {
-                    self.event_bus.publish(crate::app::events::StateEvent::EpisodeMarkedPlayed { episode_id });
-                } else {
-                    self.event_bus.publish(crate::app::events::StateEvent::EpisodeMarkedUnplayed { episode_id });
-                }
+            // Emit event
+            if new_status {
+                self.event_bus
+                    .publish(crate::app::events::StateEvent::EpisodeMarkedPlayed { episode_id });
+            } else {
+                self.event_bus
+                    .publish(crate::app::events::StateEvent::EpisodeMarkedUnplayed { episode_id });
+            }
 
-                // Reload episodes to update UI
-                if let Some(sub) = &self.current_subscription {
-                    self.load_episodes_for_subscription(sub.id).await?;
-                }
+            // Reload episodes to update UI
+            if let Some(sub) = &self.current_subscription {
+                self.load_episodes_for_subscription(sub.id).await?;
             }
         }
         Ok(())
@@ -592,8 +615,13 @@ impl AppState {
     /// Get the download progress for a specific episode
     ///
     /// Returns `None` if the episode is not currently downloading.
-    pub async fn get_download_progress(&self, episode_id: uuid::Uuid) -> Option<Arc<crate::download::DownloadProgress>> {
-        self.download_manager.get_download_progress(episode_id).await
+    pub async fn get_download_progress(
+        &self,
+        episode_id: uuid::Uuid,
+    ) -> Option<Arc<crate::download::DownloadProgress>> {
+        self.download_manager
+            .get_download_progress(episode_id)
+            .await
     }
 
     /// Get all active downloads

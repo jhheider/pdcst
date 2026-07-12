@@ -51,7 +51,10 @@ pub struct PodcastSearch {
 impl PodcastSearch {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: {
+                crate::ensure_crypto_provider();
+                reqwest::Client::new()
+            },
         }
     }
 
@@ -190,7 +193,10 @@ mod tests {
         };
 
         let result = search.convert_itunes_result(itunes_result);
-        assert!(result.is_none(), "Should return None when feed_url is missing");
+        assert!(
+            result.is_none(),
+            "Should return None when feed_url is missing"
+        );
     }
 
     #[test]

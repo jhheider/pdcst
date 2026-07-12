@@ -36,39 +36,81 @@ impl AppEvent {
 #[derive(Debug, Clone)]
 pub enum StateEvent {
     // Audio events
-    PlaybackStarted { episode_id: Uuid },
+    PlaybackStarted {
+        episode_id: Uuid,
+    },
     PlaybackPaused,
     PlaybackResumed,
     PlaybackStopped,
-    PlaybackCompleted { episode_id: Uuid },
-    PlaybackPosition { position_secs: f64 },
-    PlaybackError { error: String },
+    PlaybackCompleted {
+        episode_id: Uuid,
+    },
+    PlaybackPosition {
+        position_secs: f64,
+    },
+    PlaybackError {
+        error: String,
+    },
 
     // Volume/Speed events
-    VolumeChanged { volume: f32 },
-    SpeedChanged { speed: f32 },
+    VolumeChanged {
+        volume: f32,
+    },
+    SpeedChanged {
+        speed: f32,
+    },
 
     // Download events
-    DownloadStarted { episode_id: Uuid },
-    DownloadProgress { episode_id: Uuid, percent: f32 },
-    DownloadCompleted { episode_id: Uuid },
-    DownloadFailed { episode_id: Uuid, error: String },
-    DownloadCancelled { episode_id: Uuid },
+    DownloadStarted {
+        episode_id: Uuid,
+    },
+    DownloadProgress {
+        episode_id: Uuid,
+        percent: f32,
+    },
+    DownloadCompleted {
+        episode_id: Uuid,
+    },
+    DownloadFailed {
+        episode_id: Uuid,
+        error: String,
+    },
+    DownloadCancelled {
+        episode_id: Uuid,
+    },
 
     // Queue events
     QueueUpdated,
-    QueueAdvanced { next_episode_id: Uuid },
+    QueueAdvanced {
+        next_episode_id: Uuid,
+    },
 
     // Subscription events
-    FeedRefreshStarted { subscription_id: Uuid },
-    FeedRefreshCompleted { subscription_id: Uuid, new_episodes: usize },
-    FeedRefreshFailed { subscription_id: Uuid, error: String },
+    FeedRefreshStarted {
+        subscription_id: Uuid,
+    },
+    FeedRefreshCompleted {
+        subscription_id: Uuid,
+        new_episodes: usize,
+    },
+    FeedRefreshFailed {
+        subscription_id: Uuid,
+        error: String,
+    },
 
     // Database events
-    EpisodeMarkedPlayed { episode_id: Uuid },
-    EpisodeMarkedUnplayed { episode_id: Uuid },
-    SubscriptionAdded { subscription_id: Uuid },
-    SubscriptionRemoved { subscription_id: Uuid },
+    EpisodeMarkedPlayed {
+        episode_id: Uuid,
+    },
+    EpisodeMarkedUnplayed {
+        episode_id: Uuid,
+    },
+    SubscriptionAdded {
+        subscription_id: Uuid,
+    },
+    SubscriptionRemoved {
+        subscription_id: Uuid,
+    },
 }
 
 /// EventBus provides a centralized event publishing and subscription system
@@ -189,7 +231,10 @@ mod tests {
 
         // Test download lifecycle
         bus.publish(StateEvent::DownloadStarted { episode_id });
-        bus.publish(StateEvent::DownloadProgress { episode_id, percent: 50.0 });
+        bus.publish(StateEvent::DownloadProgress {
+            episode_id,
+            percent: 50.0,
+        });
         bus.publish(StateEvent::DownloadCompleted { episode_id });
 
         let evt1 = rx.recv().await.unwrap();

@@ -153,18 +153,42 @@ mod tests {
 
     #[test]
     fn test_download_status_conversions() {
-        assert_eq!("Downloaded".parse::<DownloadStatus>().unwrap(), DownloadStatus::Downloaded);
-        assert_eq!("Downloading".parse::<DownloadStatus>().unwrap(), DownloadStatus::Downloading);
-        assert_eq!("Failed".parse::<DownloadStatus>().unwrap(), DownloadStatus::Failed);
-        assert_eq!("Unknown".parse::<DownloadStatus>().unwrap(), DownloadStatus::NotDownloaded);
+        assert_eq!(
+            "Downloaded".parse::<DownloadStatus>().unwrap(),
+            DownloadStatus::Downloaded
+        );
+        assert_eq!(
+            "Downloading".parse::<DownloadStatus>().unwrap(),
+            DownloadStatus::Downloading
+        );
+        assert_eq!(
+            "Failed".parse::<DownloadStatus>().unwrap(),
+            DownloadStatus::Failed
+        );
+        assert_eq!(
+            "Unknown".parse::<DownloadStatus>().unwrap(),
+            DownloadStatus::NotDownloaded
+        );
     }
 
     #[test]
     fn test_playback_status_conversions() {
-        assert_eq!("Playing".parse::<PlaybackStatus>().unwrap(), PlaybackStatus::Playing);
-        assert_eq!("Paused".parse::<PlaybackStatus>().unwrap(), PlaybackStatus::Paused);
-        assert_eq!("Stopped".parse::<PlaybackStatus>().unwrap(), PlaybackStatus::Stopped);
-        assert_eq!("Unknown".parse::<PlaybackStatus>().unwrap(), PlaybackStatus::Stopped);
+        assert_eq!(
+            "Playing".parse::<PlaybackStatus>().unwrap(),
+            PlaybackStatus::Playing
+        );
+        assert_eq!(
+            "Paused".parse::<PlaybackStatus>().unwrap(),
+            PlaybackStatus::Paused
+        );
+        assert_eq!(
+            "Stopped".parse::<PlaybackStatus>().unwrap(),
+            PlaybackStatus::Stopped
+        );
+        assert_eq!(
+            "Unknown".parse::<PlaybackStatus>().unwrap(),
+            PlaybackStatus::Stopped
+        );
     }
 
     #[test]

@@ -1,9 +1,9 @@
 [package]
 name = "podcast-tui"
 version = "1.0.0"
-edition = "2021"
+edition = "2024"
 authors = ["Podcast TUI Contributors"]
-description = "A terminal-based podcast player with PocketCasts feature parity"
+description = "A fast, keyboard-driven terminal podcast player"
 license = "MIT"
 
 [dependencies]
@@ -22,8 +22,12 @@ tokio-stream = "0.1"
 # Audio
 rodio = "0.19"
 
-# HTTP/Networking
-reqwest = { version = "0.12", features = ["stream", "json"] }
+# HTTP/Networking. rustls + ring only: no native-tls/openssl, no aws-lc. Pull no
+# default TLS, take rustls with no baked-in provider, and install the ring
+# provider once at startup (see main.rs). charset for .text() decoding; http2
+# for multiplexed feed fetches.
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "charset", "http2", "rustls-tls-webpki-roots-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 # RSS/XML

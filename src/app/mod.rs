@@ -16,9 +16,9 @@ use anyhow::{Context, Result};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
@@ -75,13 +75,15 @@ impl App {
         let state = AppState::new(
             config,
             db,
-            audio_player,
-            audio_streamer,
-            queue_manager,
-            download_manager,
-            feed_refresher,
-            podcast_search,
-            artwork_manager,
+            state::Services {
+                audio_player,
+                audio_streamer,
+                queue_manager,
+                download_manager,
+                feed_refresher,
+                podcast_search,
+                artwork_manager,
+            },
             event_bus.clone(),
         );
 
@@ -95,21 +97,35 @@ impl App {
         tokio::spawn(async move {
             loop {
                 match event_rx_auto_advance.recv().await {
-                    Ok(StateEvent::PlaybackCompleted { episode_id: completed_episode_id }) => {
-                        tracing::info!("Episode {} completed, checking queue for next episode", completed_episode_id);
+                    Ok(StateEvent::PlaybackCompleted {
+                        episode_id: completed_episode_id,
+                    }) => {
+                        tracing::info!(
+                            "Episode {} completed, checking queue for next episode",
+                            completed_episode_id
+                        );
 
                         // Mark episode as played
-                        if let Err(e) = db_clone.mark_episode_played(completed_episode_id, true).await {
-                            tracing::error!("Failed to mark episode as played: {}", e);
-                        } else {
-                            // Emit episode marked played event
-                            event_bus_clone.publish(StateEvent::EpisodeMarkedPlayed {
-                                episode_id: completed_episode_id
-                            });
+                        match db_clone
+                            .mark_episode_played(completed_episode_id, true)
+                            .await
+                        {
+                            Err(e) => {
+                                tracing::error!("Failed to mark episode as played: {}", e);
+                            }
+                            _ => {
+                                // Emit episode marked played event
+                                event_bus_clone.publish(StateEvent::EpisodeMarkedPlayed {
+                                    episode_id: completed_episode_id,
+                                });
+                            }
                         }
 
                         // Remove from queue
-                        if let Err(e) = queue_manager_clone.remove_episode(completed_episode_id).await {
+                        if let Err(e) = queue_manager_clone
+                            .remove_episode(completed_episode_id)
+                            .await
+                        {
                             tracing::error!("Failed to remove episode from queue: {}", e);
                         }
 
@@ -121,45 +137,84 @@ impl App {
                                     tracing::info!("Auto-advancing to next episode in queue");
 
                                     // Load episode details
-                                    let load_result = match db_clone.get_episode(next_episode_id).await {
+                                    let load_result = match db_clone
+                                        .get_episode(next_episode_id)
+                                        .await
+                                    {
                                         Ok(Some(next_episode)) => {
                                             // Load audio data
-                                            let audio_data_result = if next_episode.is_downloaded() {
+                                            let audio_data_result = if next_episode.is_downloaded()
+                                            {
                                                 if let Some(path) = &next_episode.local_path {
-                                                    match audio_streamer_clone.load_from_file(next_episode.id, path.as_ref()).await {
+                                                    match audio_streamer_clone
+                                                        .load_from_file(
+                                                            next_episode.id,
+                                                            path.as_ref(),
+                                                        )
+                                                        .await
+                                                    {
                                                         Ok(state) => Ok(state.get_buffer().await),
-                                                        Err(e) => Err(format!("Failed to load from file: {}", e)),
+                                                        Err(e) => Err(format!(
+                                                            "Failed to load from file: {}",
+                                                            e
+                                                        )),
                                                     }
                                                 } else {
-                                                    Err("Downloaded episode missing local_path".to_string())
+                                                    Err("Downloaded episode missing local_path"
+                                                        .to_string())
                                                 }
                                             } else {
-                                                match audio_streamer_clone.stream_episode(next_episode.id, &next_episode.url).await {
+                                                match audio_streamer_clone
+                                                    .stream_episode(
+                                                        next_episode.id,
+                                                        &next_episode.url,
+                                                    )
+                                                    .await
+                                                {
                                                     Ok(state) => Ok(state.get_buffer().await),
-                                                    Err(e) => Err(format!("Failed to stream episode: {}", e)),
+                                                    Err(e) => Err(format!(
+                                                        "Failed to stream episode: {}",
+                                                        e
+                                                    )),
                                                 }
                                             };
 
                                             // Play the loaded audio
                                             match audio_data_result {
                                                 Ok(audio_data) => {
-                                                    match audio_player_clone.play_from_memory(next_episode.id, &audio_data).await {
+                                                    match audio_player_clone
+                                                        .play_from_memory(
+                                                            next_episode.id,
+                                                            &audio_data,
+                                                        )
+                                                        .await
+                                                    {
                                                         Ok(_) => {
-                                                            tracing::info!("Auto-playing: {}", next_episode.title);
+                                                            tracing::info!(
+                                                                "Auto-playing: {}",
+                                                                next_episode.title
+                                                            );
 
                                                             // Emit queue advanced event
-                                                            event_bus_clone.publish(StateEvent::QueueAdvanced {
-                                                                next_episode_id
-                                                            });
+                                                            event_bus_clone.publish(
+                                                                StateEvent::QueueAdvanced {
+                                                                    next_episode_id,
+                                                                },
+                                                            );
                                                             Ok(())
                                                         }
-                                                        Err(e) => Err(format!("Failed to play: {}", e)),
+                                                        Err(e) => {
+                                                            Err(format!("Failed to play: {}", e))
+                                                        }
                                                     }
                                                 }
                                                 Err(e) => Err(e),
                                             }
                                         }
-                                        Ok(None) => Err(format!("Episode {} not found in database", next_episode_id)),
+                                        Ok(None) => Err(format!(
+                                            "Episode {} not found in database",
+                                            next_episode_id
+                                        )),
                                         Err(e) => Err(format!("Database error: {}", e)),
                                     };
 
@@ -170,14 +225,24 @@ impl App {
                                         }
                                         Err(error_msg) => {
                                             // Failed to play this episode - emit error and try next
-                                            tracing::error!("Failed to auto-play episode {}: {}", next_episode_id, error_msg);
+                                            tracing::error!(
+                                                "Failed to auto-play episode {}: {}",
+                                                next_episode_id,
+                                                error_msg
+                                            );
                                             event_bus_clone.publish(StateEvent::PlaybackError {
-                                                error: format!("Auto-play failed: {}", error_msg)
+                                                error: format!("Auto-play failed: {}", error_msg),
                                             });
 
                                             // Remove failed episode from queue and try next
-                                            if let Err(e) = queue_manager_clone.remove_episode(next_episode_id).await {
-                                                tracing::error!("Failed to remove failed episode from queue: {}", e);
+                                            if let Err(e) = queue_manager_clone
+                                                .remove_episode(next_episode_id)
+                                                .await
+                                            {
+                                                tracing::error!(
+                                                    "Failed to remove failed episode from queue: {}",
+                                                    e
+                                                );
                                                 break;
                                             }
 
@@ -192,7 +257,7 @@ impl App {
                                 Err(e) => {
                                     tracing::error!("Failed to get next from queue: {}", e);
                                     event_bus_clone.publish(StateEvent::PlaybackError {
-                                        error: format!("Queue error: {}", e)
+                                        error: format!("Queue error: {}", e),
                                     });
                                     break;
                                 }
@@ -301,8 +366,8 @@ impl App {
 
                 // Poll for keyboard input
                 _ = tick_interval.tick() => {
-                    if event::poll(Duration::from_millis(0))? {
-                        if let Event::Key(key) = event::read()? {
+                    if event::poll(Duration::from_millis(0))?
+                        && let Event::Key(key) = event::read()? {
                             match key.code {
                                 KeyCode::Char('q') => {
                                     tracing::info!("Quit requested");
@@ -318,7 +383,6 @@ impl App {
                                 }
                             }
                         }
-                    }
                 }
             }
         }
@@ -327,8 +391,8 @@ impl App {
     }
 
     async fn handle_state_event(&mut self, event: StateEvent) -> Result<()> {
-        use state::View;
         use StateEvent::*;
+        use state::View;
 
         match event {
             PlaybackStarted { episode_id } => {
@@ -367,7 +431,10 @@ impl App {
                     let _ = self.state.load_queue().await;
                 }
             }
-            DownloadProgress { episode_id, percent } => {
+            DownloadProgress {
+                episode_id,
+                percent,
+            } => {
                 // Update download progress for the episode
                 tracing::debug!("Download progress for {}: {:.1}%", episode_id, percent);
             }
@@ -419,7 +486,9 @@ impl App {
         }
 
         // Handle search input
-        if self.state.current_view == View::Search && !matches!(key, KeyCode::Esc | KeyCode::Char('1'..='4')) {
+        if self.state.current_view == View::Search
+            && !matches!(key, KeyCode::Esc | KeyCode::Char('1'..='4'))
+        {
             match key {
                 KeyCode::Char(c) if !c.is_control() => {
                     self.state.append_search_char(c);
@@ -433,7 +502,11 @@ impl App {
                     // Trigger search
                     if !self.state.search_input.is_empty() {
                         self.state.set_status("Searching...".to_string());
-                        match self.state.search_podcasts(&self.state.search_input.clone()).await {
+                        match self
+                            .state
+                            .search_podcasts(&self.state.search_input.clone())
+                            .await
+                        {
                             Ok(_) => {
                                 self.state.selected_index = 0;
                                 self.state.clear_status();
@@ -545,7 +618,8 @@ impl App {
                 self.state.selected_index = 0;
                 // Load queue items
                 if let Err(e) = self.state.load_queue().await {
-                    self.state.show_error(format!("Failed to load queue: {}", e));
+                    self.state
+                        .show_error(format!("Failed to load queue: {}", e));
                 }
             }
             KeyCode::Char('3') => {
@@ -601,63 +675,79 @@ impl App {
                 }
             }
             KeyCode::Char('a') => {
-                if let Err(e) = self.state.add_selected_to_queue().await {
-                    self.state.show_error(format!("Failed to add to queue: {}", e));
-                } else {
-                    self.state.set_status("Added to queue".to_string());
-                    // Auto-clear status after showing
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    self.state.clear_status();
+                match self.state.add_selected_to_queue().await {
+                    Err(e) => {
+                        self.state
+                            .show_error(format!("Failed to add to queue: {}", e));
+                    }
+                    _ => {
+                        self.state.set_status("Added to queue".to_string());
+                        // Auto-clear status after showing
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        self.state.clear_status();
+                    }
                 }
             }
             KeyCode::Char('d') => {
                 self.state.set_status("Starting download...".to_string());
-                if let Err(e) = self.state.download_selected_episode().await {
-                    self.state.show_error(format!("Download failed: {}", e));
-                } else {
-                    self.state.set_status("Download started".to_string());
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    self.state.clear_status();
+                match self.state.download_selected_episode().await {
+                    Err(e) => {
+                        self.state.show_error(format!("Download failed: {}", e));
+                    }
+                    _ => {
+                        self.state.set_status("Download started".to_string());
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        self.state.clear_status();
+                    }
                 }
             }
-            KeyCode::Char('x') => {
-                if let Err(e) = self.state.delete_selected_download().await {
+            KeyCode::Char('x') => match self.state.delete_selected_download().await {
+                Err(e) => {
                     self.state.show_error(format!("Failed to delete: {}", e));
-                } else {
+                }
+                _ => {
                     self.state.set_status("Download deleted".to_string());
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     self.state.clear_status();
                 }
-            }
+            },
             KeyCode::Char('r') => {
                 self.state.set_status("Refreshing feed...".to_string());
-                if let Err(e) = self.state.refresh_selected_subscription().await {
-                    self.state.show_error(format!("Refresh failed: {}", e));
-                } else {
-                    self.state.set_status("Feed refreshed".to_string());
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    self.state.clear_status();
+                match self.state.refresh_selected_subscription().await {
+                    Err(e) => {
+                        self.state.show_error(format!("Refresh failed: {}", e));
+                    }
+                    _ => {
+                        self.state.set_status("Feed refreshed".to_string());
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        self.state.clear_status();
+                    }
                 }
             }
             KeyCode::Char('R') => {
                 self.state.set_status("Refreshing all feeds...".to_string());
-                if let Err(e) = self.state.refresh_all_subscriptions().await {
-                    self.state.show_error(format!("Refresh all failed: {}", e));
-                } else {
-                    self.state.set_status("All feeds refreshed".to_string());
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    self.state.clear_status();
+                match self.state.refresh_all_subscriptions().await {
+                    Err(e) => {
+                        self.state.show_error(format!("Refresh all failed: {}", e));
+                    }
+                    _ => {
+                        self.state.set_status("All feeds refreshed".to_string());
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        self.state.clear_status();
+                    }
                 }
             }
-            KeyCode::Char('s') => {
-                if let Err(e) = self.state.toggle_played_status().await {
-                    self.state.show_error(format!("Failed to toggle played: {}", e));
-                } else {
+            KeyCode::Char('s') => match self.state.toggle_played_status().await {
+                Err(e) => {
+                    self.state
+                        .show_error(format!("Failed to toggle played: {}", e));
+                }
+                _ => {
                     self.state.set_status("Toggled played status".to_string());
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     self.state.clear_status();
                 }
-            }
+            },
 
             // Search
             KeyCode::Char('/') => {
@@ -681,11 +771,10 @@ impl App {
 
         // Parse OPML file (sync I/O in tokio::task::spawn_blocking)
         let path_buf = path.to_path_buf();
-        let subscriptions = tokio::task::spawn_blocking(move || {
-            OpmlImporter::import_from_file(&path_buf)
-        })
-        .await
-        .context("OPML import task panicked")??;
+        let subscriptions =
+            tokio::task::spawn_blocking(move || OpmlImporter::import_from_file(&path_buf))
+                .await
+                .context("OPML import task panicked")??;
 
         let total = subscriptions.len();
         let mut imported = 0;
@@ -699,7 +788,9 @@ impl App {
                     imported += 1;
 
                     // Emit event
-                    self.state.event_bus.publish(StateEvent::SubscriptionAdded { subscription_id });
+                    self.state
+                        .event_bus
+                        .publish(StateEvent::SubscriptionAdded { subscription_id });
                 }
                 Err(e) => {
                     // Log but continue - might be duplicate RSS URL

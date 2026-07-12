@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::path::Path;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub fn setup_logging(log_dir: &Path, debug: bool) -> Result<()> {
     // Ensure log directory exists

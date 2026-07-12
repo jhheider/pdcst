@@ -259,7 +259,9 @@ async fn test_update_episode_playback_position() {
     let episode = create_test_episode(sub.id, "Test Episode");
     db.insert_episode(&episode).await.unwrap();
 
-    db.update_episode_playback_position(episode.id, 1234).await.unwrap();
+    db.update_episode_playback_position(episode.id, 1234)
+        .await
+        .unwrap();
 
     let updated = db.get_episode(episode.id).await.unwrap().unwrap();
     assert_eq!(updated.playback_position_seconds, 1234);

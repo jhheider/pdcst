@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{Semaphore, RwLock};
+use tokio::sync::{RwLock, Semaphore};
 use uuid::Uuid;
 
 pub struct DownloadManager {
@@ -24,7 +24,13 @@ pub struct DownloadManager {
 }
 
 impl DownloadManager {
-    pub fn new(download_dir: PathBuf, max_concurrent: usize, db: Arc<Database>, event_bus: Arc<EventBus>) -> Self {
+    pub fn new(
+        download_dir: PathBuf,
+        max_concurrent: usize,
+        db: Arc<Database>,
+        event_bus: Arc<EventBus>,
+    ) -> Self {
+        crate::ensure_crypto_provider();
         let client = Client::builder()
             .user_agent("podcast-tui/1.0")
             .timeout(std::time::Duration::from_secs(600)) // 10 minute timeout
@@ -59,16 +65,20 @@ impl DownloadManager {
 
     /// Cancel an active download
     pub async fn cancel_download(&self, episode_id: Uuid) -> Result<()> {
-        if let Some(cancel_tx) = self.cancel_signals.write().await.remove(&episode_id) {
-            let _ = cancel_tx.send(true);
-            tracing::info!("Cancellation requested for episode: {}", episode_id);
+        match self.cancel_signals.write().await.remove(&episode_id) {
+            Some(cancel_tx) => {
+                let _ = cancel_tx.send(true);
+                tracing::info!("Cancellation requested for episode: {}", episode_id);
 
-            // Emit download cancelled event
-            self.event_bus.publish(StateEvent::DownloadCancelled { episode_id });
+                // Emit download cancelled event
+                self.event_bus
+                    .publish(StateEvent::DownloadCancelled { episode_id });
 
-            Ok(())
-        } else {
-            anyhow::bail!("No active download for episode: {}", episode_id)
+                Ok(())
+            }
+            _ => {
+                anyhow::bail!("No active download for episode: {}", episode_id)
+            }
         }
     }
 
@@ -78,7 +88,9 @@ impl DownloadManager {
         tracing::info!("Downloading episode: {}", episode.title);
 
         // Emit download started event
-        self.event_bus.publish(StateEvent::DownloadStarted { episode_id: episode.id });
+        self.event_bus.publish(StateEvent::DownloadStarted {
+            episode_id: episode.id,
+        });
 
         // Get content length for progress tracking
         let total_size = self.get_content_length(&episode.url).await.ok();
@@ -94,7 +106,10 @@ impl DownloadManager {
             .write()
             .await
             .insert(episode.id, progress.clone());
-        self.cancel_signals.write().await.insert(episode.id, cancel_tx);
+        self.cancel_signals
+            .write()
+            .await
+            .insert(episode.id, cancel_tx);
 
         // Update status to downloading
         self.db
@@ -111,7 +126,9 @@ impl DownloadManager {
         let filepath = self.download_dir.join(&filename);
 
         // Download the file
-        let result = self.download_file(&episode.url, &filepath, progress.clone(), cancel_rx).await;
+        let result = self
+            .download_file(&episode.url, &filepath, progress.clone(), cancel_rx)
+            .await;
 
         // Clean up tracking
         self.active_downloads.write().await.remove(&episode.id);
@@ -137,7 +154,9 @@ impl DownloadManager {
                 );
 
                 // Emit download completed event
-                self.event_bus.publish(StateEvent::DownloadCompleted { episode_id: episode.id });
+                self.event_bus.publish(StateEvent::DownloadCompleted {
+                    episode_id: episode.id,
+                });
 
                 Ok(filepath)
             }
@@ -163,7 +182,7 @@ impl DownloadManager {
                 if !e.to_string().contains("cancelled") {
                     self.event_bus.publish(StateEvent::DownloadFailed {
                         episode_id: episode.id,
-                        error: e.to_string()
+                        error: e.to_string(),
                     });
                 }
 
@@ -262,13 +281,7 @@ impl DownloadManager {
             .url
             .rsplit('.')
             .next()
-            .and_then(|ext| {
-                if ext.len() <= 4 && ext.chars().all(|c| c.is_alphanumeric()) {
-                    Some(ext)
-                } else {
-                    None
-                }
-            })
+            .filter(|&ext| ext.len() <= 4 && ext.chars().all(|c| c.is_alphanumeric()))
             .unwrap_or("mp3");
 
         format!("{}.{}", safe_title, extension)
@@ -310,7 +323,10 @@ mod tests {
     }
 
     fn create_test_episode(title: &str, url: &str) -> Episode {
-        let subscription = Subscription::new("Test Podcast".to_string(), "https://example.com/feed.xml".to_string());
+        let subscription = Subscription::new(
+            "Test Podcast".to_string(),
+            "https://example.com/feed.xml".to_string(),
+        );
         let mut episode = Episode::new(
             subscription.id,
             title.to_string(),
@@ -364,7 +380,12 @@ mod tests {
         let episode_id = Uuid::new_v4();
         let result = manager.cancel_download(episode_id).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No active download"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No active download")
+        );
     }
 
     #[tokio::test]
@@ -462,7 +483,12 @@ mod tests {
     async fn test_concurrent_download_tracking() {
         let (db, temp_dir) = setup_test_db().await;
         let download_dir = temp_dir.path().join("downloads");
-        let manager = Arc::new(DownloadManager::new(download_dir, 3, db, Arc::new(EventBus::new())));
+        let manager = Arc::new(DownloadManager::new(
+            download_dir,
+            3,
+            db,
+            Arc::new(EventBus::new()),
+        ));
 
         // Simulate adding downloads to tracking
         let episode1_id = Uuid::new_v4();

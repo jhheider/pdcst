@@ -12,6 +12,7 @@ pub struct ArtworkFetcher {
 
 impl ArtworkFetcher {
     pub fn new(cache_dir: PathBuf) -> Self {
+        crate::ensure_crypto_provider();
         let client = Client::builder()
             .user_agent("podcast-tui/1.0")
             .timeout(std::time::Duration::from_secs(30))

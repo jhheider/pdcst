@@ -1,6 +1,6 @@
 use crate::models::Subscription;
 use anyhow::{Context, Result};
-use opml::{Outline, OPML};
+use opml::{OPML, Outline};
 use std::path::Path;
 
 pub struct OpmlImporter;
@@ -28,17 +28,17 @@ impl OpmlImporter {
 
     fn extract_subscriptions(outline: &Outline, subscriptions: &mut Vec<Subscription>) {
         // Check if this outline is a podcast feed
-        if let Some(xml_url) = &outline.xml_url {
-            if !xml_url.is_empty() {
-                let title = outline.text.clone();
-                let mut sub = Subscription::new(title, xml_url.clone());
+        if let Some(xml_url) = &outline.xml_url
+            && !xml_url.is_empty()
+        {
+            let title = outline.text.clone();
+            let mut sub = Subscription::new(title, xml_url.clone());
 
-                if let Some(html_url) = &outline.html_url {
-                    sub.website_url = Some(html_url.clone());
-                }
-
-                subscriptions.push(sub);
+            if let Some(html_url) = &outline.html_url {
+                sub.website_url = Some(html_url.clone());
             }
+
+            subscriptions.push(sub);
         }
 
         // Recursively process child outlines
@@ -98,7 +98,10 @@ mod tests {
 
     fn create_test_subscription(title: &str, rss_url: &str) -> Subscription {
         let mut sub = Subscription::new(title.to_string(), rss_url.to_string());
-        sub.website_url = Some(format!("https://{}.com", title.to_lowercase().replace(' ', "")));
+        sub.website_url = Some(format!(
+            "https://{}.com",
+            title.to_lowercase().replace(' ', "")
+        ));
         sub
     }
 
