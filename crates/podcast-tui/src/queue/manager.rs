@@ -91,6 +91,38 @@ impl QueueManager {
         Ok(true)
     }
 
+    /// Advance the queue past `finished_episode_id`: optionally mark it played,
+    /// remove it from the queue, and return the next episode to play (if any).
+    ///
+    /// This is the single path shared by natural completion (mark played) and
+    /// manual skip / retry-on-failure (with or without marking played). The
+    /// caller is responsible for actually playing the returned episode, since
+    /// playback needs the audio player, which the queue does not own.
+    pub async fn advance(
+        &self,
+        finished_episode_id: Uuid,
+        mark_played: bool,
+    ) -> Result<Option<Episode>> {
+        if mark_played {
+            self.db
+                .mark_episode_played(finished_episode_id, true)
+                .await?;
+            self.event_bus.publish(StateEvent::EpisodeMarkedPlayed {
+                episode_id: finished_episode_id,
+            });
+        }
+
+        // Removes the finished episode and normalizes positions (publishes
+        // QueueUpdated). A no-op if it was not in the queue (e.g. played from
+        // the Episodes view).
+        self.remove_episode(finished_episode_id).await?;
+
+        match self.get_next().await? {
+            Some(item) => Ok(self.db.get_episode(item.episode_id).await?),
+            None => Ok(None),
+        }
+    }
+
     pub async fn remove_episode(&self, episode_id: Uuid) -> Result<()> {
         self.db.remove_from_queue(episode_id).await?;
         tracing::info!("Removed episode {} from queue", episode_id);

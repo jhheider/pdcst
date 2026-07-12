@@ -450,24 +450,25 @@ impl AppState {
 
     // Playback control methods
 
-    /// Skip to the next queued episode. The currently-playing episode is the
-    /// head of the queue, so drop it first - otherwise `get_next` returns it and
-    /// we would replay the same episode instead of advancing.
+    /// Skip to the next queued episode. Uses the shared `QueueManager::advance`
+    /// (mark the current played, drop it from the queue, take the next), so `n`
+    /// and natural completion behave identically. Marking played also keeps the
+    /// skipped episode from being auto-re-queued.
     pub async fn play_next_in_queue(&mut self) -> Result<()> {
         tracing::info!("Skipping to next episode in queue");
 
-        if let Some(current) = self.current_episode.clone() {
-            // No-op if the current episode was not playing from the queue.
-            let _ = self.queue_manager.remove_episode(current.id).await;
-        }
-
-        match self.queue_manager.get_next().await? {
-            Some(next_item) => {
-                if let Some(episode) = self.db.get_episode(next_item.episode_id).await? {
-                    self.play_episode(episode).await?;
-                }
-                Ok(())
+        let next = if let Some(current) = self.current_episode.clone() {
+            self.queue_manager.advance(current.id, true).await?
+        } else {
+            // Nothing playing: just take the queue head without marking anything.
+            match self.queue_manager.get_next().await? {
+                Some(item) => self.db.get_episode(item.episode_id).await?,
+                None => None,
             }
+        };
+
+        match next {
+            Some(episode) => self.play_episode(episode).await,
             None => {
                 tracing::info!("Queue is empty");
                 Ok(())

@@ -239,3 +239,41 @@ async fn cycle_auto_queue_off_bottom_top_off() {
     let s = state.db.get_subscription(sub.id).await.unwrap().unwrap();
     assert!(!s.auto_queue, "top -> off");
 }
+
+/// advance() marks the finished episode played, removes it, and returns the next.
+#[tokio::test]
+async fn advance_marks_played_removes_and_returns_next() {
+    let (state, _dir) = build_state().await;
+    let (sub, _) = two_subs(&state).await;
+    let a = sample_episode(sub.id, "A", false, 0);
+    let b = sample_episode(sub.id, "B", false, 0);
+    state.db.insert_episode(&a).await.unwrap();
+    state.db.insert_episode(&b).await.unwrap();
+    state.queue_manager.add_episode(a.id).await.unwrap();
+    state.queue_manager.add_episode(b.id).await.unwrap();
+
+    let next = state.queue_manager.advance(a.id, true).await.unwrap();
+    assert_eq!(
+        next.as_ref().map(|e| e.id),
+        Some(b.id),
+        "returns the next episode"
+    );
+
+    let queue = state.db.get_queue().await.unwrap();
+    assert!(
+        !queue.iter().any(|i| i.episode_id == a.id),
+        "finished removed"
+    );
+    assert!(
+        state.db.get_episode(a.id).await.unwrap().unwrap().played,
+        "finished marked played"
+    );
+
+    // Advancing an empty tail returns None.
+    let none = state.queue_manager.advance(b.id, false).await.unwrap();
+    assert!(none.is_none());
+    assert!(
+        !state.db.get_episode(b.id).await.unwrap().unwrap().played,
+        "not marked when mark_played=false"
+    );
+}
