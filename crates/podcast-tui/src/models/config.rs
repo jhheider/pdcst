@@ -97,6 +97,15 @@ pub struct Config {
     #[serde(default)]
     pub trim_silence: bool,
 
+    // Cache retention (keeps on-disk audio from growing unbounded). A cap of 0
+    // means unlimited. Enforced on startup and periodically while running.
+    #[serde(default = "default_true")]
+    pub delete_on_finish: bool,
+    #[serde(default = "default_max_cache_episodes")]
+    pub max_cache_episodes: usize,
+    #[serde(default = "default_max_cache_megabytes")]
+    pub max_cache_megabytes: u64,
+
     // Position saving
     #[serde(default = "default_save_position_interval")]
     pub save_position_interval_seconds: u64,
@@ -135,6 +144,14 @@ fn default_save_position_interval() -> u64 {
     10
 }
 
+fn default_max_cache_episodes() -> usize {
+    50
+}
+
+fn default_max_cache_megabytes() -> u64 {
+    4096
+}
+
 fn default_auto_refresh() -> u64 {
     60
 }
@@ -171,6 +188,9 @@ impl Default for Config {
             skip_forward_seconds: default_skip_forward(),
             skip_backward_seconds: default_skip_backward(),
             trim_silence: false,
+            delete_on_finish: true,
+            max_cache_episodes: default_max_cache_episodes(),
+            max_cache_megabytes: default_max_cache_megabytes(),
             save_position_interval_seconds: default_save_position_interval(),
             auto_refresh_interval_minutes: default_auto_refresh(),
             max_concurrent_refreshes: default_concurrent_refreshes(),

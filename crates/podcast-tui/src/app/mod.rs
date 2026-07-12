@@ -10,6 +10,7 @@ use crate::download::DownloadManager;
 use crate::feed::{FeedRefresher, OpmlExporter, OpmlImporter, PodcastSearch};
 use crate::models::Config;
 use crate::queue::QueueManager;
+use crate::retention::RetentionManager;
 use crate::storage::Database;
 use crate::ui::Ui;
 use anyhow::{Context, Result};
@@ -70,6 +71,18 @@ impl App {
         let audio_streamer_clone = audio_streamer.clone();
         let queue_manager_clone = queue_manager.clone();
         let db_clone = db.clone();
+        let download_manager_finish = download_manager.clone();
+        let delete_on_finish = config.delete_on_finish;
+
+        // Clones + settings for the retention manager (config is moved below).
+        let retention = Arc::new(RetentionManager::new(
+            db.clone(),
+            download_manager.clone(),
+            audio_player.clone(),
+            config.stream_cache_dir(),
+            config.max_cache_episodes,
+            config.max_cache_megabytes,
+        ));
 
         // Create application state
         let state = AppState::new(
@@ -118,6 +131,25 @@ impl App {
                                 event_bus_clone.publish(StateEvent::EpisodeMarkedPlayed {
                                     episode_id: completed_episode_id,
                                 });
+                            }
+                        }
+
+                        // Delete-on-finish: reclaim a finished episode's download.
+                        if delete_on_finish
+                            && let Ok(Some(finished)) =
+                                db_clone.get_episode(completed_episode_id).await
+                            && finished.is_downloaded()
+                        {
+                            match download_manager_finish.delete_download(&finished).await {
+                                Ok(()) => tracing::info!(
+                                    "delete-on-finish: removed download for '{}'",
+                                    finished.title
+                                ),
+                                Err(e) => tracing::warn!(
+                                    "delete-on-finish failed for '{}': {}",
+                                    finished.title,
+                                    e
+                                ),
                             }
                         }
 
@@ -232,6 +264,16 @@ impl App {
                 }
             }
         });
+
+        // Disk retention: sweep the cache at startup (off the constructor's
+        // path) and periodically thereafter so it never grows unbounded.
+        {
+            let retention = retention.clone();
+            tokio::spawn(async move {
+                retention.run_startup().await;
+            });
+        }
+        retention.spawn_periodic();
 
         tracing::info!("Application initialized successfully");
 

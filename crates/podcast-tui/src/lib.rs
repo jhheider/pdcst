@@ -7,6 +7,7 @@ pub mod error;
 pub mod feed;
 pub mod models;
 pub mod queue;
+pub mod retention;
 pub mod search;
 pub mod storage;
 pub mod ui;

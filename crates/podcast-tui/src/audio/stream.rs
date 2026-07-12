@@ -179,21 +179,36 @@ async fn download_to_file(
     Ok(())
 }
 
-/// Delete stray `stream-*.audio` files from the cache dir, except the one keyed
-/// by `keep`. Best-effort: errors (a file still open on Windows, races) are
-/// ignored. On Unix, unlinking a file a reader still holds open is safe.
-fn purge_stale(cache_dir: &Path, keep: Uuid) {
-    let keep_name = format!("stream-{keep}.audio");
+/// Delete `stream-*.audio` files from the cache dir, keeping the one keyed by
+/// `keep` (if any). Best-effort: errors (a file still open on Windows, races)
+/// are ignored. On Unix, unlinking a file a reader still holds open is safe.
+fn purge_matching(cache_dir: &Path, keep: Option<Uuid>) {
+    let keep_name = keep.map(|id| format!("stream-{id}.audio"));
     let Ok(entries) = std::fs::read_dir(cache_dir) else {
         return;
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with("stream-") && name.ends_with(".audio") && name != keep_name {
+        if name.starts_with("stream-")
+            && name.ends_with(".audio")
+            && keep_name.as_deref() != Some(name.as_ref())
+        {
             let _ = std::fs::remove_file(entry.path());
         }
     }
+}
+
+/// Drop every stream temp file except the one for `keep` (the play about to
+/// start). Called when a new stream begins.
+fn purge_stale(cache_dir: &Path, keep: Uuid) {
+    purge_matching(cache_dir, Some(keep));
+}
+
+/// Drop all stream temp files. Safe at startup, when nothing is streaming;
+/// during a session the per-play [`purge_stale`] keeps the active file.
+pub fn purge_all(cache_dir: &Path) {
+    purge_matching(cache_dir, None);
 }
 
 /// A blocking, seekable reader over a file another task is still appending to.
