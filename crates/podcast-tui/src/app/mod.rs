@@ -42,7 +42,7 @@ impl App {
 
         // Initialize audio player and streamer
         let audio_player = Arc::new(AudioPlayer::new(event_bus.clone())?);
-        let audio_streamer = Arc::new(AudioStreamer::new());
+        let audio_streamer = Arc::new(AudioStreamer::new(config.stream_cache_dir()));
 
         // Initialize managers
         let queue_manager = Arc::new(QueueManager::new(db.clone(), event_bus.clone()));
@@ -136,88 +136,41 @@ impl App {
                                     let next_episode_id = next_item.episode_id;
                                     tracing::info!("Auto-advancing to next episode in queue");
 
-                                    // Load episode details
-                                    let load_result = match db_clone
-                                        .get_episode(next_episode_id)
-                                        .await
-                                    {
-                                        Ok(Some(next_episode)) => {
-                                            // Load audio data
-                                            let audio_data_result = if next_episode.is_downloaded()
-                                            {
-                                                if let Some(path) = &next_episode.local_path {
-                                                    match audio_streamer_clone
-                                                        .load_from_file(
-                                                            next_episode.id,
-                                                            path.as_ref(),
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(state) => Ok(state.get_buffer().await),
-                                                        Err(e) => Err(format!(
-                                                            "Failed to load from file: {}",
-                                                            e
-                                                        )),
-                                                    }
-                                                } else {
-                                                    Err("Downloaded episode missing local_path"
-                                                        .to_string())
-                                                }
-                                            } else {
-                                                match audio_streamer_clone
-                                                    .stream_episode(
-                                                        next_episode.id,
-                                                        &next_episode.url,
-                                                    )
-                                                    .await
+                                    // Load the episode and play it (from the top),
+                                    // reusing the shared play path so auto-advance
+                                    // streams to disk exactly like a manual play.
+                                    let load_result =
+                                        match db_clone.get_episode(next_episode_id).await {
+                                            Ok(Some(next_episode)) => {
+                                                match state::load_and_play(
+                                                    &audio_player_clone,
+                                                    &audio_streamer_clone,
+                                                    &next_episode,
+                                                    std::time::Duration::ZERO,
+                                                )
+                                                .await
                                                 {
-                                                    Ok(state) => Ok(state.get_buffer().await),
-                                                    Err(e) => Err(format!(
-                                                        "Failed to stream episode: {}",
-                                                        e
-                                                    )),
-                                                }
-                                            };
-
-                                            // Play the loaded audio
-                                            match audio_data_result {
-                                                Ok(audio_data) => {
-                                                    match audio_player_clone
-                                                        .play_from_memory(
-                                                            next_episode.id,
-                                                            &audio_data,
-                                                            std::time::Duration::ZERO,
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(_) => {
-                                                            tracing::info!(
-                                                                "Auto-playing: {}",
-                                                                next_episode.title
-                                                            );
-
-                                                            // Emit queue advanced event
-                                                            event_bus_clone.publish(
-                                                                StateEvent::QueueAdvanced {
-                                                                    next_episode_id,
-                                                                },
-                                                            );
-                                                            Ok(())
-                                                        }
-                                                        Err(e) => {
-                                                            Err(format!("Failed to play: {}", e))
-                                                        }
+                                                    Ok(()) => {
+                                                        tracing::info!(
+                                                            "Auto-playing: {}",
+                                                            next_episode.title
+                                                        );
+                                                        event_bus_clone.publish(
+                                                            StateEvent::QueueAdvanced {
+                                                                next_episode_id,
+                                                            },
+                                                        );
+                                                        Ok(())
                                                     }
+                                                    Err(e) => Err(format!("Failed to play: {}", e)),
                                                 }
-                                                Err(e) => Err(e),
                                             }
-                                        }
-                                        Ok(None) => Err(format!(
-                                            "Episode {} not found in database",
-                                            next_episode_id
-                                        )),
-                                        Err(e) => Err(format!("Database error: {}", e)),
-                                    };
+                                            Ok(None) => Err(format!(
+                                                "Episode {} not found in database",
+                                                next_episode_id
+                                            )),
+                                            Err(e) => Err(format!("Database error: {}", e)),
+                                        };
 
                                     match load_result {
                                         Ok(_) => {
@@ -322,6 +275,11 @@ impl App {
             self.state.load_subscriptions().await?;
         }
 
+        // Restore the last session's episode (shown, not auto-played).
+        if let Err(e) = self.state.restore_playback_state().await {
+            tracing::warn!("Failed to restore playback state: {}", e);
+        }
+
         // Initial draw
         terminal.draw(|f| {
             self.ui.render(f, &self.state);
@@ -367,23 +325,35 @@ impl App {
 
                 // Poll for keyboard input
                 _ = tick_interval.tick() => {
+                    let mut needs_redraw = false;
+
                     if event::poll(Duration::from_millis(0))?
                         && let Event::Key(key) = event::read()? {
                             match key.code {
                                 KeyCode::Char('q') => {
                                     tracing::info!("Quit requested");
+                                    // Persist resume position on the way out.
+                                    self.state.save_progress().await;
                                     break;
                                 }
                                 _ => {
                                     self.handle_key_event(key.code).await?;
-
-                                    // Redraw after keyboard input
-                                    terminal.draw(|f| {
-                                        self.ui.render(f, &self.state);
-                                    })?;
+                                    needs_redraw = true;
                                 }
                             }
                         }
+
+                    // Expire any transient status message (replaces the old
+                    // blocking sleep-then-clear pattern in the action handlers).
+                    if self.state.expire_status() {
+                        needs_redraw = true;
+                    }
+
+                    if needs_redraw {
+                        terminal.draw(|f| {
+                            self.ui.render(f, &self.state);
+                        })?;
+                    }
                 }
             }
         }
@@ -398,6 +368,16 @@ impl App {
         match event {
             PlaybackStarted { episode_id } => {
                 self.state.is_playing = true;
+                // The load finished: drop the "Loading..." status.
+                self.state.clear_status();
+                // Keep current_episode in sync. The manual play path already set
+                // it, but auto-advance plays directly, so load it if it differs.
+                if self.state.current_episode.as_ref().map(|e| e.id) != Some(episode_id)
+                    && let Ok(Some(ep)) = self.state.db.get_episode(episode_id).await
+                {
+                    self.state.playback_position = ep.playback_position_seconds as f64;
+                    self.state.current_episode = Some(ep);
+                }
                 tracing::debug!("Playback started: {}", episode_id);
             }
             PlaybackPaused => {
@@ -415,6 +395,9 @@ impl App {
             }
             PlaybackPosition { position_secs } => {
                 self.state.playback_position = position_secs;
+                // Checkpoint resume position on the 1s tick (fires only while
+                // playing), so a crash or quit loses at most a second.
+                self.state.save_progress().await;
             }
             PlaybackError { error } => {
                 tracing::error!("Playback error: {}", error);
@@ -682,10 +665,8 @@ impl App {
                             .show_error(format!("Failed to add to queue: {}", e));
                     }
                     _ => {
+                        // Transient status auto-clears at render time (no block).
                         self.state.set_status("Added to queue".to_string());
-                        // Auto-clear status after showing
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        self.state.clear_status();
                     }
                 }
             }
@@ -697,8 +678,6 @@ impl App {
                     }
                     _ => {
                         self.state.set_status("Download started".to_string());
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        self.state.clear_status();
                     }
                 }
             }
@@ -708,8 +687,6 @@ impl App {
                 }
                 _ => {
                     self.state.set_status("Download deleted".to_string());
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    self.state.clear_status();
                 }
             },
             KeyCode::Char('r') => {
@@ -720,8 +697,6 @@ impl App {
                     }
                     _ => {
                         self.state.set_status("Feed refreshed".to_string());
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        self.state.clear_status();
                     }
                 }
             }
@@ -733,8 +708,6 @@ impl App {
                     }
                     _ => {
                         self.state.set_status("All feeds refreshed".to_string());
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        self.state.clear_status();
                     }
                 }
             }
@@ -745,8 +718,6 @@ impl App {
                 }
                 _ => {
                     self.state.set_status("Toggled played status".to_string());
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    self.state.clear_status();
                 }
             },
 

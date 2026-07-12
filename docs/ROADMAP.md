@@ -64,7 +64,9 @@ audit (code / product / TUI-UX) is summarized at the bottom.
   (not stretched output time) in a shared `AtomicU64`, and resets on seek. Speed
   now flows through wsola, not rodio's pitch-shifting `set_speed`.
 
-**NOT yet done:** de-freeze, resume, the whole UX layer, and the auto-queue.
+**NOT yet done:** the whole UX layer (Phase B) and the auto-queue (Phase C).
+De-freeze and resume (Phase A Stages 3-4) are now done; the last Phase A item is
+Jacob's real-audio validation.
 
 ## Phases
 
@@ -78,28 +80,36 @@ it is foundational.
 
 - [x] Stage 1: rodio 0.22 migration.
 - [x] Stage 2: wsola pitch-corrected speed.
-- [ ] **Stage 3 - de-freeze the UI.** The worst UX bug (all three reviews). Two
-      causes, both on the app event loop:
-      - `AppState::play_episode` (`app/state.rs`) `.await`s
-        `AudioStreamer::stream_episode` (`audio/stream.rs`), which drains the
-        WHOLE HTTP body before returning - the TUI freezes for the length of the
-        download. Fix: spawn the fetch as a tokio task that reports progress over
-        the `EventBus` and hands the buffer to the player when ready. The
-        product-preferred default is **download-to-disk-then-play** (the
-        `DownloadManager` already downloads with progress + cancel), which
-        sidesteps progressive streaming entirely. Same pattern in the
-        auto-advance task in `app/mod.rs`.
-      - The action handlers (`a`/`d`/`x`/`r`/`R`/`s` in `app/mod.rs`) call
-        `tokio::time::sleep(2s).await` inside `handle_key_event` just to clear a
-        status message - freezing the UI for 2s on every action. Fix: store a
-        status message with an expiry timestamp, clear it at render time.
-- [ ] **Stage 4 - resume.** `Database::get_playback_state` /
-      `update_playback_state` and `update_episode_playback_position` are built,
-      migrated, and tested - but never called. Wire them: persist position on the
-      1s `PlaybackPosition` tick and on pause/stop/quit; on play, read the saved
-      per-episode position and pass it as the `start` arg to `play_from_memory`
-      (already plumbed through to `WsolaSource`/`try_seek`). This is the first
-      slice of per-episode listen state.
+- [x] **Stage 3 - de-freeze the UI.** Done. `AppState::play_episode` now spawns
+      the fetch (`load_and_play`) as a tokio task and returns immediately, so the
+      event loop never blocks on the download; it shows a persistent "Loading..."
+      status that `PlaybackStarted` clears (a failed fetch publishes
+      `PlaybackError` -> error modal). The `sleep(2s)` status-clear pattern is
+      gone: status messages carry an expiry (`StatusMessage`), cleared at render
+      time on the 50ms tick via `AppState::expire_status`. The auto-advance task
+      in `app/mod.rs` now shares the single play path (`state::load_and_play`), so
+      it streams to disk exactly like a manual play.
+- [x] **Stage 3b - progressive stream-to-disk.** Done (resolves the streaming
+      decision below). `audio/stream.rs` is now a `DiskStream` that downloads an
+      episode to a temp file in the background while a `GrowingFile` reader feeds
+      the decoder off the same file, blocking only when a read runs ahead of the
+      downloaded frontier (real EOF on completion, error on failure). Playback
+      starts after a `PREBUFFER_BYTES` (256 KiB) prebuffer - soonest start, no UI
+      block, nothing buffered wholesale in memory. Downloaded episodes play
+      straight from their file (`AudioPlayer::play_from_file`); remote ones use
+      `play_stream`; both share one generic `start_playback<R: Read + Seek>`. Temp
+      files live under `config.stream_cache_dir()` and are purged as episodes
+      change. Caveat (Jacob's ears): a resume seek into a not-yet-downloaded
+      region waits for the download to reach it, and a mid-stream download failure
+      currently ends the episode like a normal completion.
+- [x] **Stage 4 - resume.** Done. `AppState::save_progress` persists the
+      per-episode position AND the singleton `playback_state` (episode, rate,
+      volume) on the 1s `PlaybackPosition` tick, on pause, and on quit.
+      `play_episode` reads `episode.playback_position_seconds` and passes it as
+      the `start` arg (through to `WsolaSource`/`try_seek`).
+      `restore_playback_state` runs on launch: it reloads the last episode
+      (shown, not auto-played) and restores rate/volume; pressing play resumes
+      from the saved position. First slice of per-episode listen state.
 - [ ] **Real-audio validation (Jacob's ears).** The DSP is unit/property tested,
       but CI cannot hear the live path. Once PR #4 merges: run it, import the
       OPML, play an episode, confirm 1.5x sounds sped-up (not chipmunk), seek
@@ -230,8 +240,12 @@ Make it a portable single binary and ship it.
   - `wsola_source.rs`: `WsolaSource<S: Source>` wraps the decoder; tempo from a
     shared `Arc<AtomicU32>` (f32 bits), source-time position to
     `Arc<AtomicU64>`. `try_seek` -> inner seek + `TimeStretch::reset` + reposition.
-  - `stream.rs`: `AudioStreamer::stream_episode` (the inline full-body download -
-    Stage 3 target), `load_from_file`, `StreamState`.
+  - `stream.rs`: progressive stream-to-disk. `AudioStreamer::open_stream` starts
+    a `DiskStream` (background download to a temp file under
+    `config.stream_cache_dir()`), waits for a 256 KiB prebuffer, and returns a
+    `GrowingFile` - a blocking, seekable reader that waits when it runs ahead of
+    the downloaded frontier. Feeds `AudioPlayer::play_stream`; downloaded
+    episodes use `play_from_file`. `AppState::load_and_play` picks between them.
 - **wsola API**: `TimeStretch::new(sr, ch)` / `with_config`, `set_tempo`,
   `push(&[f32])`, `pull(max) -> Vec<f32>`, `flush`, `reset`; free
   `stretch(samples, sr, ch, tempo)`. Interleaved f32. Streaming output is
@@ -250,8 +264,9 @@ Make it a portable single binary and ship it.
 
 ## Open decisions
 
-- Progressive streaming vs download-then-play (audit recommends the latter; less
-  code, no seek-on-partial problem).
+- ~~Progressive streaming vs download-then-play.~~ RESOLVED 2026-07-12:
+  progressive stream-to-disk (play after a 256 KiB prebuffer while the rest
+  downloads). See Phase A Stage 3b.
 - Auto-add default: push or unshift? Per-sub UI shape.
 - Smart-interleave algorithm: insert-at-nearest-legal vs periodic re-balance.
 - Whether to pursue a musl fully-static Linux build now or after the product is

@@ -43,4 +43,10 @@ impl Config {
     pub fn database_path(&self) -> std::path::PathBuf {
         self.data_dir.join("podcast.db")
     }
+
+    /// Directory for temp files backing progressive stream-to-disk playback.
+    /// Created on demand; entries are purged as episodes change.
+    pub fn stream_cache_dir(&self) -> std::path::PathBuf {
+        self.data_dir.join("stream-cache")
+    }
 }

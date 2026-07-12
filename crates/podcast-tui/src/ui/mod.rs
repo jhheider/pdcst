@@ -500,7 +500,7 @@ impl Ui {
         f.render_widget(help, chunks[2]);
 
         // Status message overlay if present
-        if let Some(msg) = &state.status_message {
+        if let Some(msg) = state.current_status() {
             let status_area = Rect {
                 x: area.x,
                 y: area.y,
@@ -508,7 +508,7 @@ impl Ui {
                 height: 1,
             };
 
-            let status_msg = Paragraph::new(msg.as_str())
+            let status_msg = Paragraph::new(msg)
                 .style(
                     Style::default()
                         .fg(Color::Black)

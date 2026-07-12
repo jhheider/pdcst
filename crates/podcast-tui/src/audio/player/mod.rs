@@ -11,23 +11,35 @@
 //!
 //! Acquire `operation_lock` before any `state` lock; never the reverse.
 
+use super::stream::GrowingFile;
 use super::wsola_source::WsolaSource;
 use crate::app::events::{EventBus, StateEvent};
 use anyhow::{Context, Result};
 use rodio::stream::DeviceSinkBuilder;
 use rodio::{Decoder, MixerDeviceSink, Player};
-use std::io::Cursor;
+use std::fs::File;
+use std::io::{Read, Seek};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
+/// Where an episode's audio comes from. Both variants decode straight off disk
+/// (a `Read + Seek`), so nothing is buffered wholesale in memory.
+enum PlaySource {
+    /// A fully-downloaded episode, played from its on-disk file.
+    File(PathBuf),
+    /// A remote episode streaming to disk, read as it grows.
+    Stream(GrowingFile),
+}
+
 /// Commands sent to the audio thread.
 enum AudioCommand {
     Play {
         episode_id: Uuid,
-        data: Arc<[u8]>,
+        source: PlaySource,
         /// Start position (for resume); `Duration::ZERO` to play from the top.
         start: Duration,
     },
@@ -126,29 +138,37 @@ impl AudioPlayer {
         })
     }
 
-    /// Play `audio_data` for `episode_id`, starting at `start` (use
-    /// [`Duration::ZERO`] to play from the beginning; a non-zero value resumes).
-    pub async fn play_from_memory(
+    /// Play a fully-downloaded episode from its on-disk `path`, starting at
+    /// `start` ([`Duration::ZERO`] plays from the top; a non-zero value resumes).
+    pub async fn play_from_file(
         &self,
         episode_id: Uuid,
-        audio_data: &[u8],
+        path: PathBuf,
         start: Duration,
     ) -> Result<()> {
-        tracing::info!(
-            "Playing episode {} from memory ({} bytes) at {:?}",
-            episode_id,
-            audio_data.len(),
-            start
-        );
+        tracing::info!("Playing episode {episode_id} from file {path:?} at {start:?}");
+        self.start_play(episode_id, PlaySource::File(path), start)
+    }
 
-        // One copy into a shared, cheaply-clonable buffer. The decoder seeks
-        // within it (Cursor over Arc<[u8]>), so no per-seek re-copy.
-        let data: Arc<[u8]> = Arc::from(audio_data);
+    /// Play a remote episode as it streams to disk, starting at `start`. The
+    /// `reader` yields bytes as the download progresses (see [`GrowingFile`]).
+    pub async fn play_stream(
+        &self,
+        episode_id: Uuid,
+        reader: GrowingFile,
+        start: Duration,
+    ) -> Result<()> {
+        tracing::info!("Playing episode {episode_id} from stream at {start:?}");
+        self.start_play(episode_id, PlaySource::Stream(reader), start)
+    }
 
+    /// Common tail for the play entry points: dispatch to the audio thread and
+    /// announce the start.
+    fn start_play(&self, episode_id: Uuid, source: PlaySource, start: Duration) -> Result<()> {
         self.command_tx
             .send(AudioCommand::Play {
                 episode_id,
-                data,
+                source,
                 start,
             })
             .context("audio thread is gone")?;
@@ -338,7 +358,7 @@ fn handle_command(
     match cmd {
         AudioCommand::Play {
             episode_id,
-            data,
+            source,
             start,
         } => {
             tracing::debug!("audio thread: play episode {episode_id} at {start:?}");
@@ -346,29 +366,22 @@ fn handle_command(
                 p.stop();
             }
             if let Some(device) = device {
-                let decoder = match Decoder::new(Cursor::new(data)) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        let error = format!("failed to decode audio: {e}");
-                        tracing::error!("{error}");
-                        event_bus.publish(StateEvent::PlaybackError { error });
-                        return;
+                // Each source is a distinct `Read + Seek` concrete type, so open
+                // it and hand it to the generic `start_playback`.
+                match source {
+                    PlaySource::File(path) => match File::open(&path) {
+                        Ok(file) => start_playback(file, device, player, state, event_bus, start),
+                        Err(e) => {
+                            let error = format!("failed to open {}: {e}", path.display());
+                            tracing::error!("{error}");
+                            event_bus.publish(StateEvent::PlaybackError { error });
+                            return;
+                        }
+                    },
+                    PlaySource::Stream(reader) => {
+                        start_playback(reader, device, player, state, event_bus, start)
                     }
-                };
-                // Wrap in the time-stretcher for pitch-corrected speed. Tempo and
-                // position are shared with AudioState, so speed changes apply
-                // live and position is reported in source time.
-                let source =
-                    WsolaSource::new(decoder, state.tempo.clone(), state.position_ms.clone());
-                let p = Player::connect_new(device.mixer());
-                p.append(source);
-                p.set_volume(*state.volume.lock().unwrap());
-                if start > Duration::ZERO
-                    && let Err(e) = p.try_seek(start)
-                {
-                    tracing::warn!("resume seek to {start:?} failed: {e}");
                 }
-                *player = Some(p);
             }
             // State stays consistent even in silent mode (no device).
             state.set_playing(true);
@@ -422,6 +435,42 @@ fn handle_command(
             }
         }
     }
+}
+
+/// Decode `reader`, wrap it in the pitch-corrected time-stretcher, and start it
+/// on a fresh [`Player`] connected to `device`, seeking to `start` if resuming.
+///
+/// Generic over the reader so a downloaded [`File`] and a streaming
+/// [`GrowingFile`] share one code path.
+fn start_playback<R: Read + Seek + Send + Sync + 'static>(
+    reader: R,
+    device: &MixerDeviceSink,
+    player: &mut Option<Player>,
+    state: &Arc<AudioState>,
+    event_bus: &Arc<EventBus>,
+    start: Duration,
+) {
+    let decoder = match Decoder::new(reader) {
+        Ok(s) => s,
+        Err(e) => {
+            let error = format!("failed to decode audio: {e}");
+            tracing::error!("{error}");
+            event_bus.publish(StateEvent::PlaybackError { error });
+            return;
+        }
+    };
+    // Tempo and position are shared with AudioState, so speed changes apply live
+    // and position is reported in source time.
+    let source = WsolaSource::new(decoder, state.tempo.clone(), state.position_ms.clone());
+    let p = Player::connect_new(device.mixer());
+    p.append(source);
+    p.set_volume(*state.volume.lock().unwrap());
+    if start > Duration::ZERO
+        && let Err(e) = p.try_seek(start)
+    {
+        tracing::warn!("resume seek to {start:?} failed: {e}");
+    }
+    *player = Some(p);
 }
 
 // AudioPlayer must be shareable across async tasks.
