@@ -10,8 +10,6 @@ repository.workspace = true
 [dependencies]
 ratatui.workspace = true
 crossterm.workspace = true
-ratatui-image.workspace = true
-image.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tokio-util.workspace = true

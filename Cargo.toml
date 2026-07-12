@@ -17,10 +17,8 @@ repository = "https://github.com/jhheider/pdcst"
 wsola = { path = "crates/wsola", version = "0.1" }
 
 # TUI
-ratatui = "0.29"
-crossterm = "0.28"
-ratatui-image = "2.0"
-image = "0.25"
+ratatui = "0.30"
+crossterm = "0.29"
 
 # Async
 tokio = { version = "1", features = ["full"] }
@@ -32,28 +30,28 @@ rodio = "0.19"
 
 # HTTP/TLS: rustls + ring only (no native-tls/openssl, no aws-lc). No default
 # TLS, rustls with no baked-in provider, ring installed at startup (see main.rs).
-reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "charset", "http2", "rustls-tls-webpki-roots-no-provider"] }
+reqwest = { version = "0.13", default-features = false, features = ["stream", "json", "query", "charset", "http2", "rustls-no-provider", "webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 
 # RSS/XML
-rss = "2.0"
-quick-xml = "0.36"
+rss = "2.1"
+quick-xml = "0.41"
 opml = "1.1"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid", "migrate"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
+toml = "1.1"
 
 # Misc
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.11", features = ["v4", "serde"] }
 anyhow = "1.0"
 thiserror = "2.0"
-dirs = "5.0"
+dirs = "6.0"
 url = "2.5"
 bytes = "1.9"
 futures = "0.3"
