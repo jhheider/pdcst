@@ -109,12 +109,20 @@ impl AppState {
 
     pub async fn toggle_mute(&mut self) -> Result<()> {
         if self.volume > 0.0 {
+            // Remember the level so unmute restores it, not a hardcoded default.
+            self.pre_mute_volume = self.volume;
             self.audio_player.set_volume(0.0).await;
+            self.volume = 0.0;
             tracing::info!("Muted");
         } else {
-            self.audio_player.set_volume(0.5).await;
-            self.volume = 0.5;
-            tracing::info!("Unmuted");
+            let restore = if self.pre_mute_volume > 0.0 {
+                self.pre_mute_volume
+            } else {
+                1.0
+            };
+            self.audio_player.set_volume(restore).await;
+            self.volume = restore;
+            tracing::info!("Unmuted to {}", restore);
         }
         Ok(())
     }

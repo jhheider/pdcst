@@ -237,31 +237,45 @@ impl App {
                 // Poll for keyboard input
                 _ = tick_interval.tick() => {
                     let mut needs_redraw = false;
+                    let mut quit = false;
 
-                    if event::poll(Duration::from_millis(0))?
-                        && let Event::Key(key) = event::read()? {
-                            // Ctrl-C is an always-available hard quit, even while
-                            // typing (where plain 'q' is a literal character).
-                            if key.code == KeyCode::Char('c')
-                                && key.modifiers.contains(KeyModifiers::CONTROL)
-                            {
-                                tracing::info!("Hard quit (Ctrl-C)");
-                                self.state.save_progress().await;
-                                break;
+                    // Drain every pending terminal event this tick: key bursts
+                    // (held j/k) all get processed, and a Resize repaints even
+                    // when no key was pressed (otherwise the screen stays garbled
+                    // after a window drag until the next keypress).
+                    while event::poll(Duration::from_millis(0))? {
+                        match event::read()? {
+                            Event::Key(key) => {
+                                // Ctrl-C is an always-available hard quit, even
+                                // while typing (where plain 'q' is a character).
+                                if key.code == KeyCode::Char('c')
+                                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                                {
+                                    tracing::info!("Hard quit (Ctrl-C)");
+                                    quit = true;
+                                    break;
+                                }
+
+                                self.handle_key_event(key.code).await?;
+
+                                // The quit key sets a flag (routed through the key
+                                // handler) so it never fires while typing.
+                                if self.state.should_quit {
+                                    quit = true;
+                                    break;
+                                }
+                                needs_redraw = true;
                             }
-
-                            self.handle_key_event(key.code).await?;
-
-                            // The quit key sets a flag rather than breaking the
-                            // loop directly, so it routes through handle_key_event
-                            // and never fires while typing into the search box.
-                            if self.state.should_quit {
-                                tracing::info!("Quit requested");
-                                self.state.save_progress().await;
-                                break;
-                            }
-                            needs_redraw = true;
+                            Event::Resize(_, _) => needs_redraw = true,
+                            _ => {}
                         }
+                    }
+
+                    if quit {
+                        tracing::info!("Quit requested");
+                        self.state.save_progress().await;
+                        break;
+                    }
 
                     // Expire any transient status message (replaces the old
                     // blocking sleep-then-clear pattern in the action handlers).

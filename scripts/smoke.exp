@@ -1,0 +1,59 @@
+#!/usr/bin/env expect
+# Manual live smoke test: drive the pdcst TUI in a pseudo-terminal and assert it
+# renders and responds to input. CI cannot do this (no terminal), so run it by
+# hand after building:
+#
+#   cargo build
+#   HOME=$(mktemp -d) expect scripts/smoke.exp target/debug/podcast-tui
+#
+# Exits 0 only if every stage passed; exits non-zero at the first failure. Needs
+# `expect` installed. Uses the current HOME (point it at a throwaway dir so it
+# does not touch your real config/database).
+
+set timeout 12
+log_user 0
+set bin [lindex $argv 0]
+set env(TERM) "xterm-256color"
+set stty_init "rows 24 cols 80"
+
+proc stage {name pat} {
+    expect {
+        -re $pat {}
+        timeout { send_error "FAIL: $name\n"; exit 1 }
+    }
+    send_error "ok: $name\n"
+}
+
+# Notes:
+# - The real backend diff-renders (only changed cells are emitted), so assert on
+#   body content that appears when a view first draws, not on echoed keystrokes
+#   or the header (which changes by diff).
+# - The input-capture fix is proven indirectly: type a query containing 'q' and a
+#   digit into the search box, then reach Settings. If 'q'/digits had quit or
+#   switched views mid-typing, the Settings body would never render.
+
+spawn $bin
+
+stage "initial render"            "No podcasts yet"
+
+send "2"
+stage "queue view (Up Next)"      "Up Next"
+
+send "3"
+stage "search view"               "Search Podcasts"
+
+send "quiz7"
+sleep 0.3
+# Esc must stand alone: crossterm coalesces ESC+char into Alt+char, so pause
+# before the next key to let its Esc-disambiguation fire.
+send "\033"
+sleep 0.3
+send "4"
+stage "settings renders after typing q/digit" "Configuration"
+
+send "q"
+expect {
+    eof { send_error "ok: clean quit when not typing\n" }
+    timeout { send_error "FAIL: did not quit on q\n"; exit 1 }
+}
+send_error "\nALL PASS\n"

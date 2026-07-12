@@ -277,3 +277,49 @@ async fn advance_marks_played_removes_and_returns_next() {
         "not marked when mark_played=false"
     );
 }
+
+// --- product-fit: action feedback honesty + unsubscribe ---
+
+/// Actions report false (no-op) when pressed in the wrong view, so the UI does
+/// not claim success. In Episodes they act.
+#[tokio::test]
+async fn add_to_queue_only_acts_in_episodes() {
+    let (mut state, _dir) = build_state().await;
+    let sub = Subscription::new("S".to_string(), "https://example.com/s.xml".to_string());
+    state.db.insert_subscription(&sub).await.unwrap();
+    let ep = sample_episode(sub.id, "E", false, 0);
+    state.db.insert_episode(&ep).await.unwrap();
+    state.current_subscription = Some(sub);
+    state.episodes = vec![ep];
+
+    // Wrong view: no-op, reports false.
+    state.set_view(View::Subscriptions);
+    assert!(!state.add_selected_to_queue().await.unwrap());
+    assert_eq!(state.db.get_queue().await.unwrap().len(), 0);
+
+    // Episodes view: acts, reports true.
+    state.set_view(View::Episodes);
+    state.selected_index = 0;
+    assert!(state.add_selected_to_queue().await.unwrap());
+    assert_eq!(state.db.get_queue().await.unwrap().len(), 1);
+}
+
+/// Unsubscribe removes the feed (and cascade-deletes its episodes).
+#[tokio::test]
+async fn unsubscribe_removes_feed_and_episodes() {
+    let (mut state, _dir) = build_state().await;
+    let sub = Subscription::new("S".to_string(), "https://example.com/s.xml".to_string());
+    state.db.insert_subscription(&sub).await.unwrap();
+    let ep = sample_episode(sub.id, "E", false, 0);
+    state.db.insert_episode(&ep).await.unwrap();
+    state.load_subscriptions().await.unwrap();
+    state.set_view(View::Subscriptions);
+    state.selected_index = 0;
+
+    assert!(state.unsubscribe_selected().await.unwrap());
+    assert!(state.db.get_subscription(sub.id).await.unwrap().is_none());
+    assert!(
+        state.db.get_episode(ep.id).await.unwrap().is_none(),
+        "episodes cascade-deleted"
+    );
+}

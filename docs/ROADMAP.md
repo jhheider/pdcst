@@ -258,11 +258,12 @@ Up Next on their own, no manual `R`. The Settings view shows the interval.
 
 Make it a portable single binary and ship it.
 
-- [ ] **Static sqlite (easy win).** Switch the sqlx feature from `sqlite` to
-      `sqlite-bundled` - compiles the SQLite amalgamation and links it
-      statically, so there is no system `libsqlite3` dependency. This is the one
-      accepted C compile (a single well-contained amalgamation, universally
-      used); it is what pkgx does for portability. One-line change.
+- [x] **Static sqlite - already done (upstream).** sqlx 0.9 reorganized its
+      features so the `sqlite` feature now implies `sqlite-bundled`
+      (`sqlx-sqlite/bundled` -> `libsqlite3-sys` with `bundled`). pdcst already
+      uses `features = ["sqlite", ...]`, so it compiles the SQLite amalgamation
+      and links it statically today: `otool -L` / `ldd` show no `libsqlite3`. The
+      "one-line change" is obsolete. No action needed.
 - [ ] **Static ALSA: blocked, document the reality.** `alsa-sys` 0.4 hardcodes
       `pkg_config...statik(false)`, and ALSA `dlopen`s its plugins at runtime, so
       a clean static `libasound` is not feasible without forking alsa-sys - and
@@ -273,10 +274,49 @@ Make it a portable single binary and ship it.
 - [ ] **Release workflow.** A `jhheider/rust-ci` `release.yml` caller (bin-name,
       target matrix, optional Homebrew tap), like edikt/penknife. Ties into the
       musl/static story above.
-- [ ] **Version reset.** `podcast-tui` is at `1.0.0`, which overclaims (the audit
-      put it at ~35% of a daily-usable player). Reset to `0.x` before any real
-      release. `wsola` versions independently (starts 0.1.0, publishes on its own
-      cadence).
+- [ ] **Version reset (Jacob's call).** `podcast-tui` is at `1.0.0`, which
+      overclaims. Reset to `0.x` before any real release. `wsola` versions
+      independently. (Left for Jacob: which 0.x, and whether to tag at all.)
+- [ ] **Release workflow + name.** `release.yml` caller + musl target matrix;
+      also unify the identity (`pdcst` repo vs `podcast-tui` binary vs "Podcast
+      TUI" header). Jacob's call.
+
+## Product fitness (product-designer + tui-ux agents, 2026-07-12)
+
+Both agents re-reviewed the feature-complete app. Verdict: coherent daily-driver
+for its owner; the core loop closes end to end. Fixes landed this pass:
+
+- [x] **Subscribe now fetches episodes.** `subscribe_from_search_result` spawns a
+      `refresh_one`, so a fresh feed is not empty until the next scheduled
+      refresh. (Was the #1 leverage bug - a stranger's first action produced a
+      blank screen.)
+- [x] **Empty Episodes view has guidance** ("press r to refresh").
+- [x] **Actions no longer lie.** `a`/`d`/`x`/`s` return whether they acted; the
+      status only shows on real work (pressing `a` on a subscription row no
+      longer says "Added to queue").
+- [x] **Unsubscribe** (`u` in Subscriptions; cascade-deletes episodes).
+- [x] **Resize repaints** (the run loop drains all events per tick, handling
+      `Event::Resize`; also fixes key-burst lag).
+- [x] **Unmute restores the prior level** (not a hardcoded 0.5).
+- [x] **README corrected** (it claimed the auto-queue/resume were "coming").
+- [x] **Live smoke test** committed at `scripts/smoke.exp` (drives the TUI in a
+      pty via `expect`; manual, needs a terminal).
+
+Remaining for a public release (Jacob's calls, not built):
+
+- Version reset, name unification, release workflow (above).
+- Make the auto-queue discoverable/defaulted (it defaults off; `A` is only in
+  `?`/Settings). Either default it on or hint `A` in the first-run empty state.
+- Config discoverability: `Config` only loads from `--config <file>`; add
+  `--print-config` or write a commented default on first run.
+- Decide public-vs-personal. Agent recommendation: ship as a personal tool
+  others can build ("runs well for me, PRs welcome, no support"), not a
+  supported product - the scope is right, the remaining gaps are honesty and a
+  few papercuts, not capability.
+
+Cosmetic papercuts (deferred): emoji in headers (cross-terminal width),
+per-view footer hints, `Modal::Confirm` is still dead (render + a TODO handler),
+search-box arrow keys seek instead of editing.
 
 ## Cross-cutting constraints (the ethos)
 

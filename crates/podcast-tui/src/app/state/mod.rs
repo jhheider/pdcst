@@ -134,6 +134,8 @@ pub struct AppState {
     pub playback_position: f64,
     pub playback_speed: f32,
     pub volume: f32,
+    /// The volume to restore when unmuting (the level held before mute).
+    pub pre_mute_volume: f32,
 }
 
 /// The shared services AppState is built from, grouped so AppState::new does not
@@ -223,6 +225,7 @@ impl AppState {
             playback_position: 0.0,
             playback_speed: 1.0,
             volume: 1.0,
+            pre_mute_volume: 1.0,
         }
     }
 

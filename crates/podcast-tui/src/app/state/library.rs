@@ -111,34 +111,48 @@ impl AppState {
         // Reload subscriptions
         self.load_subscriptions().await?;
 
+        // Fetch the new feed's episodes now (off the loop), so drilling in shows
+        // content instead of an empty list. Without this, the feed stays empty
+        // until the next scheduled refresh (up to a full interval away).
+        let refresher = self.feed_refresher.clone();
+        tokio::spawn(async move {
+            if let Err(e) = refresher.refresh_one(subscription).await {
+                tracing::warn!("Initial refresh after subscribe failed: {}", e);
+            }
+        });
+
         tracing::info!("Successfully subscribed to: {}", result.title);
         Ok(())
     }
 
     /// Remove the selected episode from the queue (Queue view only).
-    pub async fn remove_selected_from_queue(&mut self) -> Result<()> {
+    pub async fn remove_selected_from_queue(&mut self) -> Result<bool> {
         if self.current_view == View::Queue
             && let Some(episode) = self.queue_items.get(self.selected_index).cloned()
         {
             self.queue_manager.remove_episode(episode.id).await?;
             tracing::info!("Removed '{}' from queue", episode.title);
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     // Item action methods
 
-    pub async fn add_selected_to_queue(&mut self) -> Result<()> {
+    /// Returns whether an episode was actually added (false if not in Episodes
+    /// or the list is empty), so the caller only reports success on real work.
+    pub async fn add_selected_to_queue(&mut self) -> Result<bool> {
         if self.current_view == View::Episodes
             && let Some(episode) = self.episodes.get(self.selected_index)
         {
             self.queue_manager.add_episode(episode.id).await?;
             tracing::info!("Added '{}' to queue", episode.title);
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
-    pub async fn download_selected_episode(&mut self) -> Result<()> {
+    pub async fn download_selected_episode(&mut self) -> Result<bool> {
         if self.current_view == View::Episodes
             && let Some(episode) = self.episodes.get(self.selected_index).cloned()
         {
@@ -150,11 +164,12 @@ impl AppState {
                     tracing::error!("Download failed: {}", e);
                 }
             });
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
-    pub async fn delete_selected_download(&mut self) -> Result<()> {
+    pub async fn delete_selected_download(&mut self) -> Result<bool> {
         if self.current_view == View::Episodes
             && let Some(episode) = self.episodes.get(self.selected_index)
             && episode.is_downloaded()
@@ -164,8 +179,31 @@ impl AppState {
             if let Some(sub) = &self.current_subscription {
                 self.load_episodes_for_subscription(sub.id).await?;
             }
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
+    }
+
+    /// Unsubscribe from the selected feed (Subscriptions view). Cascade-deletes
+    /// its episodes. Returns whether it acted.
+    pub async fn unsubscribe_selected(&mut self) -> Result<bool> {
+        if self.current_view == View::Subscriptions
+            && let Some(sub) = self.subscriptions.get(self.selected_index).cloned()
+        {
+            self.db.delete_subscription(sub.id).await?;
+            self.event_bus
+                .publish(crate::app::events::StateEvent::SubscriptionRemoved {
+                    subscription_id: sub.id,
+                });
+            self.set_status(format!("Unsubscribed from {}", sub.title));
+            self.load_subscriptions().await?;
+            // Keep the selection in range after the row disappears.
+            self.selected_index = self
+                .selected_index
+                .min(self.subscriptions.len().saturating_sub(1));
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Refresh the selected feed in a background task (the refresher publishes
@@ -220,7 +258,7 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn toggle_played_status(&mut self) -> Result<()> {
+    pub async fn toggle_played_status(&mut self) -> Result<bool> {
         if self.current_view == View::Episodes
             && let Some(episode) = self.episodes.get(self.selected_index)
         {
@@ -245,8 +283,9 @@ impl AppState {
             if let Some(sub) = &self.current_subscription {
                 self.load_episodes_for_subscription(sub.id).await?;
             }
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     // Queue management
