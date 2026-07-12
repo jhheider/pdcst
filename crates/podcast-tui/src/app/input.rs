@@ -234,42 +234,43 @@ impl App {
                     self.state.show_error(format!("Selection failed: {}", e));
                 }
             }
-            KeyCode::Char('a') => {
-                match self.state.add_selected_to_queue().await {
-                    Err(e) => {
-                        self.state
-                            .show_error(format!("Failed to add to queue: {}", e));
-                    }
-                    _ => {
-                        // Transient status auto-clears at render time (no block).
-                        self.state.set_status("Added to queue".to_string());
-                    }
-                }
-            }
-            KeyCode::Char('d') => {
-                self.state.set_status("Starting download...".to_string());
-                match self.state.download_selected_episode().await {
-                    Err(e) => {
-                        self.state.show_error(format!("Download failed: {}", e));
-                    }
-                    _ => {
-                        self.state.set_status("Download started".to_string());
-                    }
-                }
-            }
+            // Each action only reports success when it actually did something
+            // (the state method returns whether it acted), so a key pressed in
+            // the wrong view no longer lies with a confirming status.
+            KeyCode::Char('a') => match self.state.add_selected_to_queue().await {
+                Ok(true) => self.state.set_status("Added to queue".to_string()),
+                Ok(false) => {}
+                Err(e) => self
+                    .state
+                    .show_error(format!("Failed to add to queue: {}", e)),
+            },
+            KeyCode::Char('d') => match self.state.download_selected_episode().await {
+                Ok(true) => self.state.set_status("Download started".to_string()),
+                Ok(false) => {}
+                Err(e) => self.state.show_error(format!("Download failed: {}", e)),
+            },
             // 'x' means "remove": from the Queue, drop the selected item; from
-            // Episodes, delete its download. Each is a no-op in the other view.
+            // Episodes, delete its download. A no-op in any other view.
             KeyCode::Char('x') => {
                 if self.state.current_view == View::Queue {
                     match self.state.remove_selected_from_queue().await {
+                        Ok(true) => self.state.set_status("Removed from queue".to_string()),
+                        Ok(false) => {}
                         Err(e) => self.state.show_error(format!("Failed to remove: {}", e)),
-                        _ => self.state.set_status("Removed from queue".to_string()),
                     }
                 } else {
                     match self.state.delete_selected_download().await {
+                        Ok(true) => self.state.set_status("Download deleted".to_string()),
+                        Ok(false) => {}
                         Err(e) => self.state.show_error(format!("Failed to delete: {}", e)),
-                        _ => self.state.set_status("Download deleted".to_string()),
                     }
+                }
+            }
+            // Unsubscribe from the selected feed (Subscriptions view).
+            KeyCode::Char('u') => {
+                if let Err(e) = self.state.unsubscribe_selected().await {
+                    self.state
+                        .show_error(format!("Failed to unsubscribe: {}", e));
                 }
             }
             // Refresh runs off the event loop; its own status + the
@@ -281,13 +282,11 @@ impl App {
                 self.state.refresh_all_subscriptions();
             }
             KeyCode::Char('s') => match self.state.toggle_played_status().await {
-                Err(e) => {
-                    self.state
-                        .show_error(format!("Failed to toggle played: {}", e));
-                }
-                _ => {
-                    self.state.set_status("Toggled played status".to_string());
-                }
+                Ok(true) => self.state.set_status("Toggled played status".to_string()),
+                Ok(false) => {}
+                Err(e) => self
+                    .state
+                    .show_error(format!("Failed to toggle played: {}", e)),
             },
             // Cycle the selected subscription's auto-queue setting (Subscriptions
             // view): off -> bottom -> top -> off.

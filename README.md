@@ -16,17 +16,30 @@ crash, and keeps my queue full.
 
 ## Status
 
-In active development, and honest about it: the backend (audio, downloads, feed
-parsing, database) is solid and tested; the UI is wired but has real gaps; the
-auto-queue - the point of the whole thing - is not built yet. Do not trust a
-checklist here; trust **[docs/ROADMAP.md](docs/ROADMAP.md)**, which is the real
-plan (the auto-queue is the north star) and a technical map for picking the work
-up cold.
+Feature-complete for its purpose and in daily-driver shape. The whole staged
+plan has landed:
 
-What works today: subscribe via RSS, OPML import/export, iTunes search, a manual
-queue, and playback (play/pause/seek/**pitch-corrected** speed/volume) with
-downloads. What is coming: the auto-queue, resume, and a proper pass over the
-keyboard UX. See the roadmap for the staged plan.
+- **Audio**: play/pause, real seek, **pitch-corrected** speed (1.5x with no
+  chipmunk), cross-session resume, progressive stream-to-disk (starts fast, no
+  wait for the full download), and bounded on-disk caching (delete-on-finish +
+  size caps).
+- **The auto-queue** (the point): mark a feed with `A` and new episodes fill Up
+  Next automatically - pushed or unshifted per feed, capped at a max depth,
+  smartly interleaved so you never get a run of one show, never clobbering what
+  is playing. Listen state (unplayed / in-progress / played) is tracked
+  everywhere.
+- **Hands-off refresh**: on launch and on an interval, so the queue stays full
+  without you touching it.
+- **Keyboard UX**: scrolling lists, in-app iTunes search and subscribe, an
+  operable queue (play / remove / skip), now-playing and listen-state markers.
+
+Also here: subscribe via RSS, OPML import/export. Still to do: distribution and
+packaging (a static single-binary release), and a handful of UX papercuts -
+tracked in **[docs/ROADMAP.md](docs/ROADMAP.md)**, the canonical plan and a
+technical map for picking the work up cold.
+
+This is a personal project that runs well for its author; it is shared to read
+and build, with no support promised.
 
 ## Layout
 

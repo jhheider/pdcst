@@ -172,6 +172,33 @@ impl Ui {
             .as_ref()
             .map(|s| s.title.clone())
             .unwrap_or_else(|| "Episodes".to_string());
+
+        // A freshly-subscribed feed can be empty until its refresh lands - say so
+        // rather than showing a blank box.
+        if state.episodes.is_empty() {
+            let hint = if state.current_subscription.is_some() {
+                "No episodes yet. Press 'r' to refresh this feed."
+            } else {
+                "Select a podcast (Enter) to see its episodes."
+            };
+            let empty = Paragraph::new(vec![Line::from(""), Line::from(hint)])
+                .style(Style::default().fg(Color::Gray))
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::White))
+                        .title(format!(" {} (0) ", title))
+                        .title_style(
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                );
+            f.render_widget(empty, area);
+            return;
+        }
+
         let playing_id = state.current_episode.as_ref().map(|e| e.id);
 
         let items: Vec<ListItem> = state
@@ -628,11 +655,11 @@ impl Ui {
             Line::from("  a        Add to queue"),
             Line::from("  d        Download episode"),
             Line::from("  x        Remove (queue) / delete download"),
-            Line::from("  n        Skip to next in queue"),
             Line::from("  r        Refresh feed"),
             Line::from("  R        Refresh all"),
             Line::from("  s        Toggle played"),
             Line::from("  A        Cycle auto-queue (off/bottom/top)"),
+            Line::from("  u        Unsubscribe (subscriptions)"),
             Line::from(""),
             Line::from(Span::styled("Other:", Style::default().fg(Color::Cyan))),
             Line::from("  Enter    Open / play / subscribe"),
