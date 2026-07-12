@@ -4,15 +4,15 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use podcast_tui::app::events::EventBus;
-use podcast_tui::app::state::{AppState, Services};
-use podcast_tui::artwork::ArtworkManager;
-use podcast_tui::audio::{AudioPlayer, AudioStreamer};
-use podcast_tui::download::DownloadManager;
-use podcast_tui::feed::{FeedRefresher, PodcastSearch};
-use podcast_tui::models::{Config, Episode};
-use podcast_tui::queue::QueueManager;
-use podcast_tui::storage::Database;
+use pdcst::app::events::EventBus;
+use pdcst::app::state::{AppState, Services};
+use pdcst::artwork::ArtworkManager;
+use pdcst::audio::{AudioPlayer, AudioStreamer};
+use pdcst::download::DownloadManager;
+use pdcst::feed::{FeedRefresher, PodcastSearch};
+use pdcst::models::{Config, Episode};
+use pdcst::queue::QueueManager;
+use pdcst::storage::Database;
 use tempfile::TempDir;
 
 /// A ready-to-use `AppState` over a temp database. The returned `TempDir` must
@@ -43,7 +43,7 @@ pub async fn build_state() -> (AppState, TempDir) {
             db.clone(),
             event_bus.clone(),
             Arc::new(QueueManager::new(db.clone(), event_bus.clone())),
-            podcast_tui::feed::AutoQueuePolicy {
+            pdcst::feed::AutoQueuePolicy {
                 max_depth: 20,
                 interleave: true,
             },

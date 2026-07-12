@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
-use podcast_tui::Config;
-use podcast_tui::app::App;
-use podcast_tui::utils::logging;
+use pdcst::Config;
+use pdcst::app::App;
+use pdcst::utils::logging;
 
 #[derive(Parser, Debug)]
-#[command(name = "podcast-tui")]
+#[command(name = "pdcst")]
 #[command(about = "A terminal-based podcast player", long_about = None)]
 struct Cli {
     /// Path to custom configuration file
@@ -28,7 +28,7 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install ring as the rustls provider before any TLS client is built.
-    podcast_tui::ensure_crypto_provider();
+    pdcst::ensure_crypto_provider();
 
     let cli = Cli::parse();
 
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
 
     // Setup logging
     logging::setup_logging(&config.log_dir, cli.debug)?;
-    tracing::info!("Starting podcast-tui v{}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("Starting pdcst v{}", env!("CARGO_PKG_VERSION"));
 
     // Batch OPML operations run headlessly and exit, so the TUI never starts.
     if let Some(path) = cli.import.as_ref() {
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
             "Imported {imported} subscription(s) from {}",
             path.display()
         );
-        println!("Run `podcast-tui` to browse them.");
+        println!("Run `pdcst` to browse them.");
         return Ok(());
     }
     if let Some(path) = cli.export.as_ref() {
@@ -65,6 +65,6 @@ async fn main() -> Result<()> {
     let mut app = App::new(config).await?;
     app.run().await?;
 
-    tracing::info!("Shutting down podcast-tui");
+    tracing::info!("Shutting down pdcst");
     Ok(())
 }

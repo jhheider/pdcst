@@ -4,7 +4,7 @@
 # hand after building:
 #
 #   cargo build
-#   HOME=$(mktemp -d) expect scripts/smoke.exp target/debug/podcast-tui
+#   HOME=$(mktemp -d) expect scripts/smoke.exp target/debug/pdcst
 #
 # Exits 0 only if every stage passed; exits non-zero at the first failure. Needs
 # `expect` installed. Uses the current HOME (point it at a throwaway dir so it

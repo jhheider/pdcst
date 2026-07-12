@@ -7,13 +7,13 @@ pub fn setup_logging(log_dir: &Path, debug: bool) -> Result<()> {
     std::fs::create_dir_all(log_dir)?;
 
     // Create daily rotating file appender
-    let file_appender = tracing_appender::rolling::daily(log_dir, "podcast-tui.log");
+    let file_appender = tracing_appender::rolling::daily(log_dir, "pdcst.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     // Determine log level
     let default_level = if debug { "debug" } else { "info" };
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(format!("podcast_tui={}", default_level)));
+        .unwrap_or_else(|_| EnvFilter::new(format!("pdcst={}", default_level)));
 
     // Setup subscriber with file output
     tracing_subscriber::registry()

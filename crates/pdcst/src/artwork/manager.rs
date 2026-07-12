@@ -18,7 +18,7 @@ impl ArtworkManager {
     pub fn new(artwork_dir: PathBuf) -> Self {
         crate::ensure_crypto_provider();
         let client = Client::builder()
-            .user_agent("podcast-tui/1.0")
+            .user_agent("pdcst/0.2")
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("Failed to create HTTP client");

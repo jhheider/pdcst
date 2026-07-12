@@ -3,9 +3,9 @@
 mod common;
 
 use common::{build_state, sample_episode};
-use podcast_tui::app::state::View;
-use podcast_tui::models::{PlaybackStatus, Subscription};
-use podcast_tui::storage::db::PlaybackState;
+use pdcst::app::state::View;
+use pdcst::models::{PlaybackStatus, Subscription};
+use pdcst::storage::db::PlaybackState;
 
 /// Skipping must drop the currently-playing episode (the queue head) and advance
 /// to the next one, rather than replaying the same episode.
@@ -66,7 +66,7 @@ async fn remove_selected_drops_the_queue_item() {
 
 // --- Phase C: auto-enqueue (the publish-time hook) ---
 
-async fn two_subs(state: &podcast_tui::app::state::AppState) -> (Subscription, Subscription) {
+async fn two_subs(state: &pdcst::app::state::AppState) -> (Subscription, Subscription) {
     let a = Subscription::new("A".to_string(), "https://example.com/a.xml".to_string());
     let b = Subscription::new("B".to_string(), "https://example.com/b.xml".to_string());
     state.db.insert_subscription(&a).await.unwrap();

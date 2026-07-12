@@ -1,10 +1,10 @@
-# pdcst workspace: the podcast-tui binary and the wsola time-stretch library as
+# pdcst workspace: the pdcst binary and the wsola time-stretch library as
 # sibling crates. Metadata and dependency versions are hoisted here so the two
 # crates share one source of truth, but each crate versions independently (no
 # workspace.package.version) - wsola will publish on its own cadence.
 [workspace]
 resolver = "3"
-members = ["crates/podcast-tui", "crates/wsola"]
+members = ["crates/pdcst", "crates/wsola"]
 
 [workspace.package]
 edition = "2024"

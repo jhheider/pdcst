@@ -7,9 +7,9 @@
 mod common;
 
 use common::{build_state, sample_episode};
-use podcast_tui::app::state::{AppState, View};
-use podcast_tui::models::Subscription;
-use podcast_tui::ui::Ui;
+use pdcst::app::state::{AppState, View};
+use pdcst::models::Subscription;
+use pdcst::ui::Ui;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 

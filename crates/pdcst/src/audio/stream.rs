@@ -296,7 +296,7 @@ impl AudioStreamer {
     pub fn new(cache_dir: PathBuf) -> Self {
         crate::ensure_crypto_provider();
         let client = Client::builder()
-            .user_agent("podcast-tui/1.0")
+            .user_agent("pdcst/0.2")
             // No total timeout: a long episode may stream for the whole listen.
             // Bound stalls instead - fail if the connection goes quiet.
             .connect_timeout(Duration::from_secs(30))
