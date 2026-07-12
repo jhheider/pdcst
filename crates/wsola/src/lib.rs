@@ -244,6 +244,22 @@ impl TimeStretch {
         self.output.drain(..).collect()
     }
 
+    /// Discard all buffered input and output and reset the stretch state, as if
+    /// freshly constructed - but keep the configured geometry and tempo. Use
+    /// this after seeking the upstream source to a new position.
+    pub fn reset(&mut self) {
+        self.input.clear();
+        self.output.clear();
+        self.origin = 0;
+        self.primed = false;
+        self.draining = false;
+        self.ideal = 0.0;
+        self.last_src = 0;
+        for x in &mut self.accum {
+            *x = 0.0;
+        }
+    }
+
     #[inline]
     fn at(&self, pos: usize, channel: usize) -> f32 {
         self.input[(pos - self.origin) * self.channels + channel]

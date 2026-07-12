@@ -2324,6 +2324,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "wsola",
 ]
 
 [[package]]

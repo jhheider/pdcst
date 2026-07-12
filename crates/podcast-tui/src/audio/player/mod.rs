@@ -11,12 +11,13 @@
 //!
 //! Acquire `operation_lock` before any `state` lock; never the reverse.
 
+use super::wsola_source::WsolaSource;
 use crate::app::events::{EventBus, StateEvent};
 use anyhow::{Context, Result};
 use rodio::stream::DeviceSinkBuilder;
 use rodio::{Decoder, MixerDeviceSink, Player};
 use std::io::Cursor;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
@@ -34,7 +35,6 @@ enum AudioCommand {
     Resume,
     Stop,
     Seek(Duration),
-    SetSpeed(f32),
     SetVolume(f32),
     Shutdown,
 }
@@ -42,10 +42,13 @@ enum AudioCommand {
 /// Shared audio state, read from async code without touching the audio thread.
 struct AudioState {
     current_episode: Mutex<Option<Uuid>>,
-    position_ms: AtomicU64,
+    /// Source-time position (ms), shared with the WsolaSource, which writes it.
+    position_ms: Arc<AtomicU64>,
     is_playing: AtomicBool,
     is_paused: AtomicBool,
-    speed: Mutex<f32>,
+    /// Tempo (`f32` bits), shared with the WsolaSource, which reads it live.
+    /// Pitch-corrected speed is wsola's job, not the sink's.
+    tempo: Arc<AtomicU32>,
     volume: Mutex<f32>,
 }
 
@@ -53,12 +56,20 @@ impl AudioState {
     fn new() -> Self {
         Self {
             current_episode: Mutex::new(None),
-            position_ms: AtomicU64::new(0),
+            position_ms: Arc::new(AtomicU64::new(0)),
             is_playing: AtomicBool::new(false),
             is_paused: AtomicBool::new(false),
-            speed: Mutex::new(1.0),
+            tempo: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             volume: Mutex::new(1.0),
         }
+    }
+
+    fn tempo(&self) -> f32 {
+        f32::from_bits(self.tempo.load(Ordering::Relaxed))
+    }
+
+    fn set_tempo(&self, tempo: f32) {
+        self.tempo.store(tempo.to_bits(), Ordering::Relaxed);
     }
 
     fn set_position(&self, position: Duration) {
@@ -221,14 +232,14 @@ impl AudioPlayer {
     /// Set playback speed (`1.0` normal). Clamped to `[0.1, 4.0]`.
     pub async fn set_speed(&self, speed: f32) {
         let speed = speed.clamp(0.1, 4.0);
-        *self.state.speed.lock().unwrap() = speed;
-        let _ = self.command_tx.send(AudioCommand::SetSpeed(speed));
+        // The WsolaSource reads this live from the audio thread; no command.
+        self.state.set_tempo(speed);
         self.event_bus.publish(StateEvent::SpeedChanged { speed });
     }
 
     /// Current playback speed.
     pub async fn get_speed(&self) -> f32 {
-        *self.state.speed.lock().unwrap()
+        self.state.tempo()
     }
 
     /// Set volume, clamped to `[0.0, 1.0]`.
@@ -289,8 +300,8 @@ fn audio_thread(
                     // Position comes straight from the player (accounts for speed
                     // and seeks); no manual clock to drift.
                     if state.is_playing.load(Ordering::Relaxed) && !p.is_paused() {
-                        let position = p.get_pos();
-                        state.set_position(position);
+                        // The WsolaSource keeps this current in source time.
+                        let position = state.get_position();
                         if last_position_event.elapsed() >= Duration::from_secs(1) {
                             event_bus.publish(StateEvent::PlaybackPosition {
                                 position_secs: position.as_secs_f64(),
@@ -331,7 +342,7 @@ fn handle_command(
             if let Some(p) = player.take() {
                 p.stop();
             }
-            let source = match Decoder::new(Cursor::new(data)) {
+            let decoder = match Decoder::new(Cursor::new(data)) {
                 Ok(s) => s,
                 Err(e) => {
                     let error = format!("failed to decode audio: {e}");
@@ -340,9 +351,12 @@ fn handle_command(
                     return;
                 }
             };
+            // Wrap in the time-stretcher for pitch-corrected speed. Tempo and
+            // position are shared with AudioState, so speed changes apply live
+            // and position is reported in source time.
+            let source = WsolaSource::new(decoder, state.tempo.clone(), state.position_ms.clone());
             let p = Player::connect_new(device.mixer());
             p.append(source);
-            p.set_speed(*state.speed.lock().unwrap());
             p.set_volume(*state.volume.lock().unwrap());
             if start > Duration::ZERO
                 && let Err(e) = p.try_seek(start)
@@ -385,12 +399,6 @@ fn handle_command(
                     Ok(()) => state.set_position(position),
                     Err(e) => tracing::error!("seek to {position:?} failed: {e}"),
                 }
-            }
-        }
-
-        AudioCommand::SetSpeed(speed) => {
-            if let Some(p) = player {
-                p.set_speed(speed);
             }
         }
 
