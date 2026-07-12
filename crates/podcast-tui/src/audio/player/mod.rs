@@ -1,21 +1,20 @@
-//! Audio playback module
+//! Audio playback.
 //!
-//! Provides a thread-safe audio player with seeking, speed control,
-//! and volume management. The player runs in a dedicated thread to
-//! avoid blocking async operations and to work around the !Send nature
-//! of rodio's OutputStream.
+//! A thread-safe [`AudioPlayer`] with seeking, speed, and volume. The engine
+//! (rodio) runs on a dedicated std thread because its device sink is `!Send` and
+//! must stay on one thread; async code talks to it over an `mpsc` command
+//! channel and reads state through atomics. Playback state changes are published
+//! on the [`EventBus`] so the UI updates event-driven, never by polling the
+//! player.
 //!
-//! # Lock Ordering Convention
+//! # Lock ordering
 //!
-//! To prevent deadlocks, always acquire locks in this order:
-//! 1. operation_lock (ensures atomic operations)
-//! 2. state (audio state)
-//!
-//! Never acquire a lower-numbered lock while holding a higher-numbered lock.
+//! Acquire `operation_lock` before any `state` lock; never the reverse.
 
 use crate::app::events::{EventBus, StateEvent};
 use anyhow::{Context, Result};
-use rodio::{Decoder, OutputStream, Sink, Source};
+use rodio::stream::DeviceSinkBuilder;
+use rodio::{Decoder, MixerDeviceSink, Player};
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -23,11 +22,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
-/// Commands sent to the audio thread
+/// Commands sent to the audio thread.
 enum AudioCommand {
     Play {
         episode_id: Uuid,
-        data: Arc<Vec<u8>>,
+        data: Arc<[u8]>,
+        /// Start position (for resume); `Duration::ZERO` to play from the top.
+        start: Duration,
     },
     Pause,
     Resume,
@@ -38,7 +39,7 @@ enum AudioCommand {
     Shutdown,
 }
 
-/// Shared audio state accessible from async code
+/// Shared audio state, read from async code without touching the audio thread.
 struct AudioState {
     current_episode: Mutex<Option<Uuid>>,
     position_ms: AtomicU64,
@@ -46,7 +47,6 @@ struct AudioState {
     is_paused: AtomicBool,
     speed: Mutex<f32>,
     volume: Mutex<f32>,
-    audio_buffer: Mutex<Option<Arc<Vec<u8>>>>,
 }
 
 impl AudioState {
@@ -58,7 +58,6 @@ impl AudioState {
             is_paused: AtomicBool::new(false),
             speed: Mutex::new(1.0),
             volume: Mutex::new(1.0),
-            audio_buffer: Mutex::new(None),
         }
     }
 
@@ -68,8 +67,7 @@ impl AudioState {
     }
 
     fn get_position(&self) -> Duration {
-        let ms = self.position_ms.load(Ordering::Relaxed);
-        Duration::from_millis(ms)
+        Duration::from_millis(self.position_ms.load(Ordering::Relaxed))
     }
 
     fn set_playing(&self, playing: bool) {
@@ -87,25 +85,22 @@ impl AudioState {
     }
 }
 
-/// Thread-safe audio player
+/// Thread-safe audio player handle.
 pub struct AudioPlayer {
     command_tx: mpsc::Sender<AudioCommand>,
     state: Arc<AudioState>,
-    /// Ensures operations like seek are atomic
+    /// Serializes multi-step operations (e.g. seek) against each other.
     operation_lock: Arc<TokioMutex<()>>,
-    /// Event bus for publishing state changes
     event_bus: Arc<EventBus>,
 }
 
 impl AudioPlayer {
-    /// Create a new audio player with event publishing
-    ///
-    /// Spawns a dedicated audio thread that owns the OutputStream and publishes state changes to the event bus.
+    /// Create a player, spawning the dedicated audio thread that owns the output
+    /// device and publishes state changes to `event_bus`.
     pub fn new(event_bus: Arc<EventBus>) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
         let state = Arc::new(AudioState::new());
 
-        // Spawn dedicated audio thread
         let state_clone = state.clone();
         let event_bus_clone = event_bus.clone();
         std::thread::spawn(move || {
@@ -120,187 +115,136 @@ impl AudioPlayer {
         })
     }
 
-    /// Play audio from memory buffer
-    pub async fn play_from_memory(&self, episode_id: Uuid, audio_data: &[u8]) -> Result<()> {
+    /// Play `audio_data` for `episode_id`, starting at `start` (use
+    /// [`Duration::ZERO`] to play from the beginning; a non-zero value resumes).
+    pub async fn play_from_memory(
+        &self,
+        episode_id: Uuid,
+        audio_data: &[u8],
+        start: Duration,
+    ) -> Result<()> {
         tracing::info!(
-            "Playing episode {} from memory ({} bytes)",
+            "Playing episode {} from memory ({} bytes) at {:?}",
             episode_id,
-            audio_data.len()
+            audio_data.len(),
+            start
         );
 
-        // Wrap audio buffer in Arc for cheap cloning (no need to copy ~60MB on every seek)
-        let audio_arc = Arc::new(audio_data.to_vec());
-
-        // Store audio buffer for seeking
-        {
-            let mut buffer = self.state.audio_buffer.lock().unwrap();
-            *buffer = Some(audio_arc.clone());
-        }
+        // One copy into a shared, cheaply-clonable buffer. The decoder seeks
+        // within it (Cursor over Arc<[u8]>), so no per-seek re-copy.
+        let data: Arc<[u8]> = Arc::from(audio_data);
 
         self.command_tx
             .send(AudioCommand::Play {
                 episode_id,
-                data: audio_arc,
+                data,
+                start,
             })
-            .context("Failed to send play command")?;
+            .context("audio thread is gone")?;
 
-        // Update current episode
-        {
-            let mut current = self.state.current_episode.lock().unwrap();
-            *current = Some(episode_id);
-        }
-
-        // Emit playback started event
+        *self.state.current_episode.lock().unwrap() = Some(episode_id);
         self.event_bus
             .publish(StateEvent::PlaybackStarted { episode_id });
-
         Ok(())
     }
 
-    /// Pause playback
+    /// Pause playback.
     pub async fn pause(&self) {
         let _ = self.command_tx.send(AudioCommand::Pause);
         self.state.set_paused(true);
-        tracing::debug!("Playback paused");
-
-        // Emit playback paused event
         self.event_bus.publish(StateEvent::PlaybackPaused);
     }
 
-    /// Resume playback
+    /// Resume playback.
     pub async fn play(&self) {
         let _ = self.command_tx.send(AudioCommand::Resume);
         self.state.set_playing(true);
-        tracing::debug!("Playback resumed");
-
-        // Emit playback resumed event
         self.event_bus.publish(StateEvent::PlaybackResumed);
     }
 
-    /// Stop playback
+    /// Stop playback and clear the current episode.
     pub async fn stop(&self) {
         let _ = self.command_tx.send(AudioCommand::Stop);
         self.state.set_playing(false);
         self.state.set_paused(false);
         self.state.set_position(Duration::ZERO);
-
-        let mut current = self.state.current_episode.lock().unwrap();
-        *current = None;
-
-        tracing::debug!("Playback stopped");
-
-        // Emit playback stopped event
+        *self.state.current_episode.lock().unwrap() = None;
         self.event_bus.publish(StateEvent::PlaybackStopped);
     }
 
-    /// Check if currently playing
+    /// Whether audio is currently playing.
     pub async fn is_playing(&self) -> bool {
         self.state.is_playing.load(Ordering::Relaxed)
     }
 
-    /// Check if paused
+    /// Whether playback is paused.
     pub async fn is_paused(&self) -> bool {
         self.state.is_paused.load(Ordering::Relaxed)
     }
 
-    /// Check if stopped or empty
+    /// Whether playback is neither playing nor paused.
     pub async fn is_stopped(&self) -> bool {
         !self.is_playing().await && !self.is_paused().await
     }
 
-    /// Get current playback position in seconds
+    /// Current playback position in seconds.
     pub async fn get_position(&self) -> f64 {
         self.state.get_position().as_secs_f64()
     }
 
-    /// Seek forward by duration
+    /// Seek forward by `duration`.
     pub async fn seek_forward(&self, duration: Duration) -> Result<()> {
         let _guard = self.operation_lock.lock().await;
-
-        let current_pos = self.state.get_position();
-        let new_pos = current_pos + duration;
-
+        let new_pos = self.state.get_position() + duration;
         self.command_tx
             .send(AudioCommand::Seek(new_pos))
-            .context("Failed to send seek command")?;
-
-        Ok(())
+            .context("audio thread is gone")
     }
 
-    /// Seek backward by duration
+    /// Seek backward by `duration`.
     pub async fn seek_backward(&self, duration: Duration) -> Result<()> {
         let _guard = self.operation_lock.lock().await;
-
-        let current_pos = self.state.get_position();
-        let new_pos = current_pos.saturating_sub(duration);
-
+        let new_pos = self.state.get_position().saturating_sub(duration);
         self.command_tx
             .send(AudioCommand::Seek(new_pos))
-            .context("Failed to send seek command")?;
-
-        Ok(())
+            .context("audio thread is gone")
     }
 
-    /// Seek to a specific position
+    /// Seek to an absolute `position`.
     pub async fn seek_to(&self, position: Duration) -> Result<()> {
         let _guard = self.operation_lock.lock().await;
-
-        tracing::debug!("Seeking to position: {:?}", position);
-
         self.command_tx
             .send(AudioCommand::Seek(position))
-            .context("Failed to send seek command")?;
-
-        Ok(())
+            .context("audio thread is gone")
     }
 
-    /// Set playback speed (1.0 = normal, 2.0 = double speed)
+    /// Set playback speed (`1.0` normal). Clamped to `[0.1, 4.0]`.
     pub async fn set_speed(&self, speed: f32) {
-        let clamped_speed = speed.clamp(0.1, 4.0);
-        {
-            let mut s = self.state.speed.lock().unwrap();
-            *s = clamped_speed;
-        }
-
-        let _ = self.command_tx.send(AudioCommand::SetSpeed(clamped_speed));
-        tracing::debug!("Playback speed set to {}", clamped_speed);
-
-        // Emit speed changed event
-        self.event_bus.publish(StateEvent::SpeedChanged {
-            speed: clamped_speed,
-        });
+        let speed = speed.clamp(0.1, 4.0);
+        *self.state.speed.lock().unwrap() = speed;
+        let _ = self.command_tx.send(AudioCommand::SetSpeed(speed));
+        self.event_bus.publish(StateEvent::SpeedChanged { speed });
     }
 
-    /// Get current playback speed
+    /// Current playback speed.
     pub async fn get_speed(&self) -> f32 {
         *self.state.speed.lock().unwrap()
     }
 
-    /// Set volume (0.0 to 1.0)
+    /// Set volume, clamped to `[0.0, 1.0]`.
     pub async fn set_volume(&self, volume: f32) {
-        let clamped_volume = volume.clamp(0.0, 1.0);
-        {
-            let mut v = self.state.volume.lock().unwrap();
-            *v = clamped_volume;
-        }
-
-        let _ = self
-            .command_tx
-            .send(AudioCommand::SetVolume(clamped_volume));
-        tracing::debug!("Volume set to {}", clamped_volume);
-
-        // Emit volume changed event
-        self.event_bus.publish(StateEvent::VolumeChanged {
-            volume: clamped_volume,
-        });
+        let volume = volume.clamp(0.0, 1.0);
+        *self.state.volume.lock().unwrap() = volume;
+        let _ = self.command_tx.send(AudioCommand::SetVolume(volume));
+        self.event_bus.publish(StateEvent::VolumeChanged { volume });
     }
 
-    /// Get current volume
+    /// Current volume.
     pub async fn get_volume(&self) -> f32 {
         *self.state.volume.lock().unwrap()
     }
 
-    /// Get current episode ID
+    /// The episode currently loaded, if any.
     pub async fn get_current_episode(&self) -> Option<Uuid> {
         *self.state.current_episode.lock().unwrap()
     }
@@ -312,264 +256,159 @@ impl Drop for AudioPlayer {
     }
 }
 
-// Note: Default implementation removed as AudioPlayer now requires an EventBus parameter
-
-/// Audio thread that owns the OutputStream and Sink
-///
-/// This runs in a dedicated std::thread (not tokio) because OutputStream
-/// and Sink are !Send and must stay on the same thread.
+/// The audio thread: owns the `!Send` output device and the current [`Player`],
+/// services commands, and drives position/completion events.
 fn audio_thread(
     rx: mpsc::Receiver<AudioCommand>,
     state: Arc<AudioState>,
     event_bus: Arc<EventBus>,
 ) {
-    // Create audio output stream - this stays on this thread
-    let Ok((_stream, stream_handle)) = OutputStream::try_default() else {
-        tracing::error!("Failed to create audio output stream");
-        return;
+    let device = match DeviceSinkBuilder::open_default_sink() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("no audio output device: {e}");
+            return;
+        }
     };
 
-    let mut sink: Option<Sink> = None;
-    let mut playback_start_time: Option<Instant> = None;
-    let mut start_position = Duration::ZERO;
-    let mut current_playing_episode: Option<Uuid> = None;
-    let mut last_position_event_time = Instant::now();
+    let mut player: Option<Player> = None;
+    let mut current_episode: Option<Uuid> = None;
+    let mut last_position_event = Instant::now();
 
     loop {
-        // Use recv_timeout to periodically update position
         match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(AudioCommand::Shutdown) => break,
             Ok(cmd) => {
-                let should_shutdown = matches!(cmd, AudioCommand::Shutdown);
-
-                // Track episode ID when Play command is received
                 if let AudioCommand::Play { episode_id, .. } = &cmd {
-                    current_playing_episode = Some(*episode_id);
+                    current_episode = Some(*episode_id);
                 }
-
-                handle_command(
-                    cmd,
-                    &mut sink,
-                    &stream_handle,
-                    &state,
-                    &mut playback_start_time,
-                    &mut start_position,
-                    &event_bus,
-                );
-                if should_shutdown {
-                    break;
-                }
+                handle_command(cmd, &mut player, &device, &state, &event_bus);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Update position
-                if let Some(start_time) = playback_start_time
-                    && state.is_playing.load(Ordering::Relaxed)
-                {
-                    let elapsed = start_time.elapsed();
-                    let position = start_position + elapsed;
-                    state.set_position(position);
-
-                    // Emit position event every 1 second
-                    if last_position_event_time.elapsed() >= Duration::from_secs(1) {
-                        event_bus.publish(StateEvent::PlaybackPosition {
-                            position_secs: position.as_secs_f64(),
-                        });
-                        last_position_event_time = Instant::now();
+                if let Some(p) = &player {
+                    // Position comes straight from the player (accounts for speed
+                    // and seeks); no manual clock to drift.
+                    if state.is_playing.load(Ordering::Relaxed) && !p.is_paused() {
+                        let position = p.get_pos();
+                        state.set_position(position);
+                        if last_position_event.elapsed() >= Duration::from_secs(1) {
+                            event_bus.publish(StateEvent::PlaybackPosition {
+                                position_secs: position.as_secs_f64(),
+                            });
+                            last_position_event = Instant::now();
+                        }
                     }
-                }
-
-                // Check if playback completed
-                if let Some(ref s) = sink
-                    && s.empty()
-                    && state.is_playing.load(Ordering::Relaxed)
-                {
-                    state.set_playing(false);
-                    state.set_paused(false);
-                    playback_start_time = None;
-
-                    // Notify completion via event bus
-                    if let Some(episode_id) = current_playing_episode.take() {
-                        tracing::debug!("Playback completed for episode {}", episode_id);
-                        event_bus.publish(StateEvent::PlaybackCompleted { episode_id });
-                    } else {
-                        tracing::debug!("Playback completed");
+                    if p.empty() && state.is_playing.load(Ordering::Relaxed) {
+                        state.set_playing(false);
+                        state.set_paused(false);
+                        if let Some(episode_id) = current_episode.take() {
+                            event_bus.publish(StateEvent::PlaybackCompleted { episode_id });
+                        }
                     }
                 }
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                break;
-            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 
-    tracing::debug!("Audio thread exited");
+    tracing::debug!("audio thread exited");
 }
 
 fn handle_command(
     cmd: AudioCommand,
-    sink: &mut Option<Sink>,
-    stream_handle: &rodio::OutputStreamHandle,
+    player: &mut Option<Player>,
+    device: &MixerDeviceSink,
     state: &Arc<AudioState>,
-    playback_start_time: &mut Option<Instant>,
-    start_position: &mut Duration,
     event_bus: &Arc<EventBus>,
 ) {
     match cmd {
-        AudioCommand::Play { episode_id, data } => {
-            tracing::debug!("Audio thread: Playing episode {}", episode_id);
-
-            // Stop any existing playback
-            if let Some(s) = sink.take() {
-                s.stop();
+        AudioCommand::Play {
+            episode_id,
+            data,
+            start,
+        } => {
+            tracing::debug!("audio thread: play episode {episode_id} at {start:?}");
+            if let Some(p) = player.take() {
+                p.stop();
             }
-
-            // Decode audio (data is Arc<Vec<u8>>, clone the inner Vec for Cursor)
-            match Decoder::new(Cursor::new(data.as_ref().clone())) {
-                Ok(source) => {
-                    // Create new sink
-                    match Sink::try_new(stream_handle) {
-                        Ok(new_sink) => {
-                            new_sink.append(source);
-
-                            // Apply current settings
-                            let speed = *state.speed.lock().unwrap();
-                            let volume = *state.volume.lock().unwrap();
-                            new_sink.set_speed(speed);
-                            new_sink.set_volume(volume);
-
-                            *sink = Some(new_sink);
-                            *start_position = Duration::ZERO;
-                            *playback_start_time = Some(Instant::now());
-                            state.set_playing(true);
-                            state.set_position(Duration::ZERO);
-                        }
-                        Err(e) => {
-                            let error_msg = format!("Failed to create sink: {}", e);
-                            tracing::error!("{}", error_msg);
-                            event_bus.publish(StateEvent::PlaybackError { error: error_msg });
-                        }
-                    }
-                }
+            let source = match Decoder::new(Cursor::new(data)) {
+                Ok(s) => s,
                 Err(e) => {
-                    let error_msg = format!("Failed to decode audio: {}", e);
-                    tracing::error!("{}", error_msg);
-                    event_bus.publish(StateEvent::PlaybackError { error: error_msg });
+                    let error = format!("failed to decode audio: {e}");
+                    tracing::error!("{error}");
+                    event_bus.publish(StateEvent::PlaybackError { error });
+                    return;
                 }
+            };
+            let p = Player::connect_new(device.mixer());
+            p.append(source);
+            p.set_speed(*state.speed.lock().unwrap());
+            p.set_volume(*state.volume.lock().unwrap());
+            if start > Duration::ZERO
+                && let Err(e) = p.try_seek(start)
+            {
+                tracing::warn!("resume seek to {start:?} failed: {e}");
             }
+            state.set_playing(true);
+            state.set_position(start);
+            *player = Some(p);
         }
 
         AudioCommand::Pause => {
-            if let &mut Some(ref s) = sink {
-                s.pause();
+            if let Some(p) = player {
+                p.pause();
                 state.set_paused(true);
-
-                // Update start position for accurate resume
-                if let Some(start_time) = *playback_start_time {
-                    *start_position += start_time.elapsed();
-                }
-                *playback_start_time = None;
             }
         }
 
         AudioCommand::Resume => {
-            if let &mut Some(ref s) = sink {
-                s.play();
+            if let Some(p) = player {
+                p.play();
                 state.set_playing(true);
-                *playback_start_time = Some(Instant::now());
             }
         }
 
         AudioCommand::Stop => {
-            if let Some(s) = sink.take() {
-                s.stop();
+            if let Some(p) = player.take() {
+                p.stop();
             }
             state.set_playing(false);
             state.set_paused(false);
             state.set_position(Duration::ZERO);
-            *playback_start_time = None;
-            *start_position = Duration::ZERO;
         }
 
         AudioCommand::Seek(position) => {
-            tracing::debug!("Audio thread: Seeking to {:?}", position);
-
-            // Get audio buffer (Arc clone is cheap - just increments reference count)
-            // Performance: skip_duration() is O(n) but provides ±1s accuracy,
-            // which is acceptable for podcast playback.
-            // Future optimization: Use symphonia for frame-accurate O(1) seeking if needed.
-            let buffer_opt = state.audio_buffer.lock().unwrap().clone();
-
-            if let Some(data) = buffer_opt {
-                // Stop current playback
-                if let Some(s) = sink.take() {
-                    s.stop();
+            // Real seek: the decoder seeks within its buffer, O(1)-ish, no
+            // re-decode from zero.
+            if let Some(p) = player {
+                match p.try_seek(position) {
+                    Ok(()) => state.set_position(position),
+                    Err(e) => tracing::error!("seek to {position:?} failed: {e}"),
                 }
-
-                // Re-decode and skip to position (Arc makes this cheap - no copy)
-                match Decoder::new(Cursor::new(data.as_ref().clone())) {
-                    Ok(source) => {
-                        let source = source.skip_duration(position);
-
-                        match Sink::try_new(stream_handle) {
-                            Ok(new_sink) => {
-                                new_sink.append(source);
-
-                                // Apply current settings
-                                let speed = *state.speed.lock().unwrap();
-                                let volume = *state.volume.lock().unwrap();
-                                new_sink.set_speed(speed);
-                                new_sink.set_volume(volume);
-
-                                // Start paused if we were paused
-                                if state.is_paused.load(Ordering::Relaxed) {
-                                    new_sink.pause();
-                                }
-
-                                *sink = Some(new_sink);
-                                *start_position = position;
-                                *playback_start_time = if state.is_playing.load(Ordering::Relaxed) {
-                                    Some(Instant::now())
-                                } else {
-                                    None
-                                };
-                                state.set_position(position);
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to create sink after seek: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to decode audio for seek: {}", e);
-                    }
-                }
-            } else {
-                tracing::warn!("No audio buffer available for seeking");
             }
         }
 
         AudioCommand::SetSpeed(speed) => {
-            if let &mut Some(ref s) = sink {
-                s.set_speed(speed);
+            if let Some(p) = player {
+                p.set_speed(speed);
             }
         }
 
         AudioCommand::SetVolume(volume) => {
-            if let &mut Some(ref s) = sink {
-                s.set_volume(volume);
+            if let Some(p) = player {
+                p.set_volume(volume);
             }
         }
 
         AudioCommand::Shutdown => {
-            tracing::debug!("Audio thread shutting down");
-            if let Some(s) = sink.take() {
-                s.stop();
+            if let Some(p) = player.take() {
+                p.stop();
             }
-            // Shutdown is handled in the main loop
         }
     }
 }
 
-// Verify that AudioPlayer is Send + Sync
+// AudioPlayer must be shareable across async tasks.
 fn _assert_send_sync() {
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}

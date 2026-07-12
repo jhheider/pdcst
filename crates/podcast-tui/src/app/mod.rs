@@ -186,6 +186,7 @@ impl App {
                                                         .play_from_memory(
                                                             next_episode.id,
                                                             &audio_data,
+                                                            std::time::Duration::ZERO,
                                                         )
                                                         .await
                                                     {

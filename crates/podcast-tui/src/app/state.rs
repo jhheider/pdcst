@@ -247,9 +247,9 @@ impl AppState {
             state.get_buffer().await
         };
 
-        // 2. Play through audio player
+        // 2. Play through audio player (from the top; resume is wired later)
         self.audio_player
-            .play_from_memory(episode.id, &audio_data)
+            .play_from_memory(episode.id, &audio_data, std::time::Duration::ZERO)
             .await?;
 
         // 3. Update app state
