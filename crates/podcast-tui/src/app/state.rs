@@ -398,15 +398,26 @@ impl AppState {
     /// Search for podcasts using the iTunes Search API
     ///
     /// Updates `self.search_results` with the results.
-    pub async fn search_podcasts(&mut self, query: &str) -> Result<()> {
+    /// Run an iTunes search in a background task, delivering results via a
+    /// `SearchCompleted` event (or `SearchFailed`). Non-blocking, so typing
+    /// Enter never freezes the UI on the network call.
+    pub fn start_search(&self, query: String) {
         tracing::info!("Searching for podcasts: {}", query);
-
-        let results = self.podcast_search.search(query).await?;
-
-        tracing::info!("Found {} results", results.len());
-        self.search_results = results;
-
-        Ok(())
+        let search = self.podcast_search.clone();
+        let event_bus = self.event_bus.clone();
+        tokio::spawn(async move {
+            match search.search(&query).await {
+                Ok(results) => {
+                    tracing::info!("Found {} results", results.len());
+                    event_bus.publish(StateEvent::SearchCompleted { results });
+                }
+                Err(e) => {
+                    event_bus.publish(StateEvent::SearchFailed {
+                        error: e.to_string(),
+                    });
+                }
+            }
+        });
     }
 
     /// Subscribe to a podcast from a search result
@@ -611,22 +622,35 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn refresh_selected_subscription(&mut self) -> Result<()> {
+    /// Refresh the selected feed in a background task (the refresher publishes
+    /// FeedRefresh* events; the UI reloads on completion). Never blocks the loop.
+    pub fn refresh_selected_subscription(&mut self) {
         if self.current_view == View::Subscriptions
             && let Some(subscription) = self.subscriptions.get(self.selected_index).cloned()
         {
             tracing::info!("Refreshing subscription: {}", subscription.title);
-            self.feed_refresher.refresh_one(subscription).await?;
+            self.set_status(format!("Refreshing {}...", subscription.title));
+            let refresher = self.feed_refresher.clone();
+            tokio::spawn(async move {
+                if let Err(e) = refresher.refresh_one(subscription).await {
+                    tracing::error!("Refresh failed: {}", e);
+                }
+            });
         }
-        Ok(())
     }
 
-    pub async fn refresh_all_subscriptions(&mut self) -> Result<()> {
+    /// Refresh every feed in a background task (concurrency-bounded inside the
+    /// refresher). Non-blocking; each feed's completion drives a UI reload.
+    pub fn refresh_all_subscriptions(&mut self) {
         tracing::info!("Refreshing all subscriptions");
+        self.set_status("Refreshing all feeds...".to_string());
+        let refresher = self.feed_refresher.clone();
         let subscriptions = self.subscriptions.clone();
-        self.feed_refresher.refresh_all(subscriptions).await?;
-        self.load_subscriptions().await?;
-        Ok(())
+        tokio::spawn(async move {
+            if let Err(e) = refresher.refresh_all(subscriptions).await {
+                tracing::error!("Refresh all failed: {}", e);
+            }
+        });
     }
 
     pub async fn toggle_played_status(&mut self) -> Result<()> {

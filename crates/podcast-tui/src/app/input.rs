@@ -56,22 +56,11 @@ impl App {
                     return Ok(());
                 }
                 KeyCode::Enter => {
-                    // Run the search, then move focus to the results list.
+                    // Fire the search off the event loop; results arrive via a
+                    // SearchCompleted event, which moves focus to the list.
                     if !self.state.search_input.is_empty() {
                         self.state.set_status("Searching...".to_string());
-                        match self
-                            .state
-                            .search_podcasts(&self.state.search_input.clone())
-                            .await
-                        {
-                            Ok(_) => {
-                                self.state.clear_status();
-                                self.state.focus_search_results();
-                            }
-                            Err(e) => {
-                                self.state.show_error(format!("Search failed: {}", e));
-                            }
-                        }
+                        self.state.start_search(self.state.search_input.clone());
                     }
                     return Ok(());
                 }
@@ -283,27 +272,13 @@ impl App {
                     }
                 }
             }
+            // Refresh runs off the event loop; its own status + the
+            // FeedRefresh* events drive the UI (no blocking, no await here).
             KeyCode::Char('r') => {
-                self.state.set_status("Refreshing feed...".to_string());
-                match self.state.refresh_selected_subscription().await {
-                    Err(e) => {
-                        self.state.show_error(format!("Refresh failed: {}", e));
-                    }
-                    _ => {
-                        self.state.set_status("Feed refreshed".to_string());
-                    }
-                }
+                self.state.refresh_selected_subscription();
             }
             KeyCode::Char('R') => {
-                self.state.set_status("Refreshing all feeds...".to_string());
-                match self.state.refresh_all_subscriptions().await {
-                    Err(e) => {
-                        self.state.show_error(format!("Refresh all failed: {}", e));
-                    }
-                    _ => {
-                        self.state.set_status("All feeds refreshed".to_string());
-                    }
-                }
+                self.state.refresh_all_subscriptions();
             }
             KeyCode::Char('s') => match self.state.toggle_played_status().await {
                 Err(e) => {

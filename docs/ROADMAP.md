@@ -174,10 +174,13 @@ tier-1 (the gate into Phase C) first.
       queue head) before advancing, so `n` skips instead of replaying it. The
       completion path already removed+advanced; folding both into one
       `QueueManager` method is left for the Phase C queue rework.
-- [ ] **Un-freeze refresh + search (next, PR 4).** `refresh_*` and
-      `search_podcasts` are still `.await`ed inside the key handler, freezing the
-      UI on every network call; spawn them off-loop and drive the existing
-      FeedRefresh events into visible indicators.
+- [x] **Un-freeze refresh + search (PR 4).** `refresh_selected_subscription` /
+      `refresh_all_subscriptions` now spawn off the event loop (the refresher's
+      FeedRefresh* events drive the reload in `handle_state_event`:
+      `FeedRefreshCompleted` reloads subscriptions + the viewed episode list and
+      reports "Refreshed: N new"). Search likewise: `start_search` spawns and
+      publishes a new `SearchCompleted { results }` / `SearchFailed` event that
+      the handler applies (results + focus). No network call blocks the UI now.
 
 Tests: `queue_ops` integration tests cover the skip and remove behavior; the
 render smoke tests now also cover the search view. Shared `tests/common` builds a

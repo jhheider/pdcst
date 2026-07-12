@@ -1,3 +1,4 @@
+use crate::feed::SearchResult;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -95,6 +96,15 @@ pub enum StateEvent {
     },
     FeedRefreshFailed {
         subscription_id: Uuid,
+        error: String,
+    },
+
+    // Search events (delivered off the event loop so the UI never blocks on the
+    // network call).
+    SearchCompleted {
+        results: Vec<SearchResult>,
+    },
+    SearchFailed {
         error: String,
     },
 
