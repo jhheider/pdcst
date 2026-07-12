@@ -3,7 +3,7 @@ name = "podcast-tui"
 version = "1.0.0"
 edition = "2024"
 authors = ["Podcast TUI Contributors"]
-description = "A terminal-based podcast player with PocketCasts feature parity"
+description = "A fast, keyboard-driven terminal podcast player"
 license = "MIT"
 
 [dependencies]
