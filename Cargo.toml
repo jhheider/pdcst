@@ -26,7 +26,7 @@ tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["codec"] }
 
 # Audio
-rodio = "0.19"
+rodio = "0.22"
 
 # HTTP/TLS: rustls + ring only (no native-tls/openssl, no aws-lc). No default
 # TLS, rustls with no baked-in provider, ring installed at startup (see main.rs).

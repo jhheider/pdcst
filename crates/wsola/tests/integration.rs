@@ -177,6 +177,31 @@ fn stereo_keeps_interleaving_and_pitch() {
 }
 
 #[test]
+fn reset_clears_state_and_resumes_like_new() {
+    let a = sine(300.0, 0.5);
+    let b = sine(300.0, 0.5);
+
+    // Feed some audio, reset, then process `b` - result must equal processing
+    // `b` on a fresh stretcher (reset leaves no residue from `a`).
+    let mut ts = TimeStretch::new(SR, 1).unwrap();
+    ts.set_tempo(1.5);
+    ts.push(&a);
+    let _ = ts.pull(usize::MAX);
+    ts.reset();
+    ts.push(&b);
+    let mut after_reset = ts.pull(usize::MAX);
+    after_reset.extend(ts.flush());
+
+    let fresh = stretch(&b, SR, 1, 1.5).unwrap();
+    assert_eq!(after_reset.len(), fresh.len());
+    for (x, y) in after_reset.iter().zip(&fresh) {
+        assert!((x - y).abs() < 1e-4);
+    }
+    // Tempo survives the reset.
+    assert_eq!(ts.tempo(), 1.5);
+}
+
+#[test]
 fn tempo_change_mid_stream_is_smooth() {
     let input = sine(400.0, 2.0);
     let mut ts = TimeStretch::with_config(SR, 1, Config::default()).unwrap();
