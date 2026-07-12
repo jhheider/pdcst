@@ -43,6 +43,39 @@ pub enum View {
     Settings,
 }
 
+/// The four top-level views the number keys and Tab cycle through. Episodes is a
+/// drill-down of Subscriptions (reached with Enter, left with Esc), not a tab of
+/// its own, so number/Tab navigation and the help screen all share one model.
+const TOP_VIEWS: [View; 4] = [
+    View::Subscriptions,
+    View::Queue,
+    View::Search,
+    View::Settings,
+];
+
+/// The next top-level view when cycling with Tab. Episodes cycles as if it were
+/// Subscriptions (its parent), so Tab out of a drill-down is predictable.
+fn next_top_view(view: View) -> View {
+    let current = if view == View::Episodes {
+        View::Subscriptions
+    } else {
+        view
+    };
+    let idx = TOP_VIEWS.iter().position(|&v| v == current).unwrap_or(0);
+    TOP_VIEWS[(idx + 1) % TOP_VIEWS.len()]
+}
+
+/// The previous top-level view (Shift-Tab), with Episodes treated as its parent.
+fn prev_top_view(view: View) -> View {
+    let current = if view == View::Episodes {
+        View::Subscriptions
+    } else {
+        view
+    };
+    let idx = TOP_VIEWS.iter().position(|&v| v == current).unwrap_or(0);
+    TOP_VIEWS[(idx + TOP_VIEWS.len() - 1) % TOP_VIEWS.len()]
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Modal {
     None,
@@ -72,6 +105,8 @@ pub struct AppState {
     pub search_cursor: usize,
     pub status_message: Option<StatusMessage>,
     pub show_help: bool,
+    /// Set by the quit key; the run loop checks it and exits.
+    pub should_quit: bool,
 
     // Data
     pub subscriptions: Vec<Subscription>,
@@ -157,6 +192,7 @@ impl AppState {
             search_cursor: 0,
             status_message: None,
             show_help: false,
+            should_quit: false,
             subscriptions: Vec::new(),
             episodes: Vec::new(),
             current_subscription: None,
@@ -212,14 +248,24 @@ impl AppState {
         self.selected_index = 0;
     }
 
-    pub fn next_item(&mut self) {
-        let max_index = match self.current_view {
-            View::Subscriptions => self.subscriptions.len().saturating_sub(1),
-            View::Episodes => self.episodes.len().saturating_sub(1),
-            _ => 0,
-        };
+    /// Number of items in the current view's list (0 for non-list views).
+    fn current_list_len(&self) -> usize {
+        match self.current_view {
+            View::Subscriptions => self.subscriptions.len(),
+            View::Episodes => self.episodes.len(),
+            View::Queue => self.queue_items.len(),
+            View::Search => self.search_results.len(),
+            View::Settings => 0,
+        }
+    }
 
-        if self.selected_index < max_index {
+    /// Highest selectable index in the current view (0 when empty).
+    fn max_index(&self) -> usize {
+        self.current_list_len().saturating_sub(1)
+    }
+
+    pub fn next_item(&mut self) {
+        if self.selected_index < self.max_index() {
             self.selected_index += 1;
         }
     }
@@ -414,25 +460,11 @@ impl AppState {
     // View navigation methods
 
     pub fn next_view(&mut self) {
-        self.current_view = match self.current_view {
-            View::Subscriptions => View::Episodes,
-            View::Episodes => View::Queue,
-            View::Queue => View::Search,
-            View::Search => View::Settings,
-            View::Settings => View::Subscriptions,
-        };
-        self.selected_index = 0;
+        self.set_view(next_top_view(self.current_view));
     }
 
     pub fn previous_view(&mut self) {
-        self.current_view = match self.current_view {
-            View::Subscriptions => View::Settings,
-            View::Settings => View::Search,
-            View::Search => View::Queue,
-            View::Queue => View::Episodes,
-            View::Episodes => View::Subscriptions,
-        };
-        self.selected_index = 0;
+        self.set_view(prev_top_view(self.current_view));
     }
 
     // List navigation methods
@@ -442,13 +474,7 @@ impl AppState {
     }
 
     pub fn goto_bottom(&mut self) {
-        let max_index = match self.current_view {
-            View::Subscriptions => self.subscriptions.len().saturating_sub(1),
-            View::Episodes => self.episodes.len().saturating_sub(1),
-            View::Queue => 0, // TODO: Get queue length
-            _ => 0,
-        };
-        self.selected_index = max_index;
+        self.selected_index = self.max_index();
     }
 
     pub fn page_up(&mut self) {
@@ -456,13 +482,7 @@ impl AppState {
     }
 
     pub fn page_down(&mut self) {
-        let max_index = match self.current_view {
-            View::Subscriptions => self.subscriptions.len().saturating_sub(1),
-            View::Episodes => self.episodes.len().saturating_sub(1),
-            View::Queue => 0,
-            _ => 0,
-        };
-        self.selected_index = (self.selected_index + 10).min(max_index);
+        self.selected_index = (self.selected_index + 10).min(self.max_index());
     }
 
     // Item action methods
@@ -827,5 +847,26 @@ mod tests {
 
         assert!(!msg.is_expired(now));
         assert!(!msg.is_expired(now + Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn tab_cycles_the_four_top_level_views() {
+        assert_eq!(next_top_view(View::Subscriptions), View::Queue);
+        assert_eq!(next_top_view(View::Queue), View::Search);
+        assert_eq!(next_top_view(View::Search), View::Settings);
+        assert_eq!(next_top_view(View::Settings), View::Subscriptions);
+
+        assert_eq!(prev_top_view(View::Subscriptions), View::Settings);
+        assert_eq!(prev_top_view(View::Settings), View::Search);
+        assert_eq!(prev_top_view(View::Search), View::Queue);
+        assert_eq!(prev_top_view(View::Queue), View::Subscriptions);
+    }
+
+    #[test]
+    fn episodes_cycles_as_its_parent_subscriptions() {
+        // Episodes is a drill-down, not a tab: Tab out of it behaves like being
+        // in Subscriptions, so it never dead-ends.
+        assert_eq!(next_top_view(View::Episodes), View::Queue);
+        assert_eq!(prev_top_view(View::Episodes), View::Settings);
     }
 }

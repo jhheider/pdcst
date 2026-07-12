@@ -491,7 +491,7 @@ impl Ui {
         }
 
         // Help text
-        let help_text = "[1-4] Views | [?] Help | [q] Quit | [Space] Play/Pause | [j/k] Navigate | [a] Add to Queue";
+        let help_text = "[1-4] Views | [Tab] Cycle | [Enter] Open | [/] Search | [Space] Play | [?] Help | [q] Quit";
 
         let help = Paragraph::new(help_text)
             .style(Style::default().fg(Color::DarkGray))
@@ -549,6 +549,8 @@ impl Ui {
             Line::from("  4        Settings"),
             Line::from("  Tab      Next view"),
             Line::from("  Shift+Tab Previous view"),
+            Line::from("  Enter    Open podcast (episodes)"),
+            Line::from("  Esc      Back to subscriptions"),
             Line::from(""),
             Line::from(Span::styled("Playback:", Style::default().fg(Color::Cyan))),
             Line::from("  Space    Play/Pause"),
@@ -573,7 +575,7 @@ impl Ui {
             Line::from("  /        Search mode"),
             Line::from("  Esc      Close modal/Back"),
             Line::from("  ?        This help"),
-            Line::from("  q        Quit"),
+            Line::from("  q        Quit (Ctrl-C while typing)"),
             Line::from(""),
             Line::from(Span::styled(
                 "Press Esc to close",

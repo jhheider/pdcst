@@ -15,7 +15,7 @@ use crate::storage::Database;
 use crate::ui::Ui;
 use anyhow::{Context, Result};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -371,18 +371,27 @@ impl App {
 
                     if event::poll(Duration::from_millis(0))?
                         && let Event::Key(key) = event::read()? {
-                            match key.code {
-                                KeyCode::Char('q') => {
-                                    tracing::info!("Quit requested");
-                                    // Persist resume position on the way out.
-                                    self.state.save_progress().await;
-                                    break;
-                                }
-                                _ => {
-                                    self.handle_key_event(key.code).await?;
-                                    needs_redraw = true;
-                                }
+                            // Ctrl-C is an always-available hard quit, even while
+                            // typing (where plain 'q' is a literal character).
+                            if key.code == KeyCode::Char('c')
+                                && key.modifiers.contains(KeyModifiers::CONTROL)
+                            {
+                                tracing::info!("Hard quit (Ctrl-C)");
+                                self.state.save_progress().await;
+                                break;
                             }
+
+                            self.handle_key_event(key.code).await?;
+
+                            // The quit key sets a flag rather than breaking the
+                            // loop directly, so it routes through handle_key_event
+                            // and never fires while typing into the search box.
+                            if self.state.should_quit {
+                                tracing::info!("Quit requested");
+                                self.state.save_progress().await;
+                                break;
+                            }
+                            needs_redraw = true;
                         }
 
                     // Expire any transient status message (replaces the old
@@ -511,10 +520,11 @@ impl App {
             Modal::None => {}
         }
 
-        // Handle search input
-        if self.state.current_view == View::Search
-            && !matches!(key, KeyCode::Esc | KeyCode::Char('1'..='4'))
-        {
+        // Handle search input. While the box has focus, every printable key
+        // (digits and 'q' included) types into it; only Esc (exit) and Enter
+        // (run) escape to the global handlers, so typing can never switch views
+        // or quit the app. Arrow/Page keys fall through to navigate results.
+        if self.state.current_view == View::Search && !matches!(key, KeyCode::Esc) {
             match key {
                 KeyCode::Char(c) if !c.is_control() => {
                     self.state.append_search_char(c);
@@ -556,12 +566,20 @@ impl App {
                 return Ok(());
             }
 
-            // Esc - close modal or exit search
+            // Quit (a literal 'q' while typing is handled by the search gate above).
+            KeyCode::Char('q') => {
+                self.state.should_quit = true;
+                return Ok(());
+            }
+
+            // Esc - close a modal, leave search, or drill back out of Episodes.
             KeyCode::Esc => {
                 if self.state.modal != Modal::None {
                     self.state.close_modal();
                 } else if self.state.current_view == View::Search {
                     self.state.exit_search_mode();
+                } else if self.state.current_view == View::Episodes {
+                    self.state.set_view(View::Subscriptions);
                 }
                 return Ok(());
             }
