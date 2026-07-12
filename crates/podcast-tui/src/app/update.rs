@@ -73,6 +73,51 @@ impl App {
                 tracing::error!("Download failed for {}: {}", episode_id, error);
                 self.state.show_error(format!("Download failed: {}", error));
             }
+
+            // A background feed refresh finished: reload subscriptions (new
+            // episode counts) and, if the refreshed feed is the one being viewed,
+            // its episode list too.
+            FeedRefreshCompleted {
+                subscription_id,
+                new_episodes,
+            } => {
+                let _ = self.state.load_subscriptions().await;
+                if self
+                    .state
+                    .current_subscription
+                    .as_ref()
+                    .is_some_and(|s| s.id == subscription_id)
+                {
+                    let _ = self
+                        .state
+                        .load_episodes_for_subscription(subscription_id)
+                        .await;
+                }
+                if new_episodes > 0 {
+                    self.state
+                        .set_status(format!("Refreshed: {new_episodes} new"));
+                } else {
+                    self.state.set_status("Feed refreshed".to_string());
+                }
+            }
+            FeedRefreshFailed {
+                subscription_id,
+                error,
+            } => {
+                tracing::error!("Refresh failed for {}: {}", subscription_id, error);
+                self.state.show_error(format!("Refresh failed: {}", error));
+            }
+
+            // Background search finished: show the results and move focus to them.
+            SearchCompleted { results } => {
+                self.state.search_results = results;
+                self.state.clear_status();
+                self.state.focus_search_results();
+            }
+            SearchFailed { error } => {
+                self.state.show_error(format!("Search failed: {}", error));
+            }
+
             _ => {
                 // Other events don't need immediate UI state updates
             }
