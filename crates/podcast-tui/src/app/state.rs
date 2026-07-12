@@ -653,6 +653,27 @@ impl AppState {
         });
     }
 
+    /// Cycle the selected subscription's auto-queue setting through
+    /// off -> add-to-bottom -> add-to-top -> off. New episodes from an on feed
+    /// are auto-added to the queue at publish time (see the refresher hook).
+    pub async fn cycle_selected_auto_queue(&mut self) -> Result<()> {
+        if self.current_view == View::Subscriptions
+            && let Some(sub) = self.subscriptions.get(self.selected_index).cloned()
+        {
+            let (auto_queue, to_top, label) = match (sub.auto_queue, sub.auto_queue_to_top) {
+                (false, _) => (true, false, "auto-queue: bottom"),
+                (true, false) => (true, true, "auto-queue: top"),
+                (true, true) => (false, false, "auto-queue: off"),
+            };
+            self.db
+                .update_subscription_auto_queue(sub.id, auto_queue, to_top)
+                .await?;
+            self.set_status(format!("{} - {}", sub.title, label));
+            self.load_subscriptions().await?;
+        }
+        Ok(())
+    }
+
     pub async fn toggle_played_status(&mut self) -> Result<()> {
         if self.current_view == View::Episodes
             && let Some(episode) = self.episodes.get(self.selected_index)

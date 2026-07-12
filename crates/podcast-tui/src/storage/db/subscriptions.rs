@@ -129,6 +129,22 @@ impl Database {
         }
     }
 
+    /// Update a subscription's auto-queue setting (on/off and direction).
+    pub async fn update_subscription_auto_queue(
+        &self,
+        id: Uuid,
+        auto_queue: bool,
+        to_top: bool,
+    ) -> Result<()> {
+        sqlx::query("UPDATE subscriptions SET auto_queue = ?, auto_queue_to_top = ? WHERE id = ?")
+            .bind(auto_queue)
+            .bind(to_top)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn update_subscription_last_refreshed(&self, id: Uuid) -> Result<()> {
         sqlx::query("UPDATE subscriptions SET last_refreshed = ? WHERE id = ?")
             .bind(Utc::now())

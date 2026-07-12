@@ -213,3 +213,29 @@ async fn auto_enqueue_interleave_avoids_adjacency() {
         assert_ne!(pair[0], pair[1], "no two adjacent episodes share a podcast");
     }
 }
+
+/// The 'A' key cycles a subscription's auto-queue: off -> bottom -> top -> off.
+#[tokio::test]
+async fn cycle_auto_queue_off_bottom_top_off() {
+    let (mut state, _dir) = build_state().await;
+    let sub = Subscription::new("S".to_string(), "https://example.com/s.xml".to_string());
+    state.db.insert_subscription(&sub).await.unwrap();
+    state.load_subscriptions().await.unwrap();
+    state.set_view(View::Subscriptions);
+    state.selected_index = 0;
+
+    // off -> bottom
+    state.cycle_selected_auto_queue().await.unwrap();
+    let s = state.db.get_subscription(sub.id).await.unwrap().unwrap();
+    assert!(s.auto_queue && !s.auto_queue_to_top, "off -> bottom");
+
+    // bottom -> top
+    state.cycle_selected_auto_queue().await.unwrap();
+    let s = state.db.get_subscription(sub.id).await.unwrap().unwrap();
+    assert!(s.auto_queue && s.auto_queue_to_top, "bottom -> top");
+
+    // top -> off
+    state.cycle_selected_auto_queue().await.unwrap();
+    let s = state.db.get_subscription(sub.id).await.unwrap().unwrap();
+    assert!(!s.auto_queue, "top -> off");
+}

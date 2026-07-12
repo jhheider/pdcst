@@ -289,6 +289,14 @@ impl App {
                     self.state.set_status("Toggled played status".to_string());
                 }
             },
+            // Cycle the selected subscription's auto-queue setting (Subscriptions
+            // view): off -> bottom -> top -> off.
+            KeyCode::Char('A') => {
+                if let Err(e) = self.state.cycle_selected_auto_queue().await {
+                    self.state
+                        .show_error(format!("Failed to set auto-queue: {}", e));
+                }
+            }
 
             // Search
             KeyCode::Char('/') => {
