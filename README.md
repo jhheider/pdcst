@@ -45,7 +45,7 @@ and build, with no support promised.
 
 A Cargo workspace with two independently-versioned sibling crates:
 
-- `crates/podcast-tui` - the player binary.
+- `crates/pdcst` - the player binary.
 - `crates/wsola` - a standalone pure-Rust [WSOLA](https://en.wikipedia.org/wiki/Audio_time_stretching_and_pitch_scaling)
   time-stretch library (pitch-preserved tempo: 1.5x without the chipmunk
   effect). Born from this player's need for real podcast speed; it will publish
@@ -69,10 +69,10 @@ cargo build --release
 
 ```bash
 # Import your subscriptions (e.g. exported from Pocket Casts) and exit
-./target/release/podcast-tui --import podcasts.opml
+./target/release/pdcst --import podcasts.opml
 
 # Run it
-./target/release/podcast-tui
+./target/release/pdcst
 
 # Options: --config <file>, --debug, --export <file>
 ```

@@ -32,7 +32,7 @@ impl DownloadManager {
     ) -> Self {
         crate::ensure_crypto_provider();
         let client = Client::builder()
-            .user_agent("podcast-tui/1.0")
+            .user_agent("pdcst/0.2")
             .timeout(std::time::Duration::from_secs(600)) // 10 minute timeout
             .build()
             .expect("Failed to create HTTP client");

@@ -1,6 +1,6 @@
 [package]
-name = "podcast-tui"
-version = "1.0.0"
+name = "pdcst"
+version = "0.2.0"
 description = "A fast, keyboard-driven terminal podcast player"
 edition.workspace = true
 license.workspace = true
@@ -44,5 +44,5 @@ mockito.workspace = true
 proptest.workspace = true
 
 [[bin]]
-name = "podcast-tui"
+name = "pdcst"
 path = "src/main.rs"

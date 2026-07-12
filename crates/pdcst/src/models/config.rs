@@ -187,7 +187,7 @@ impl Default for Config {
     fn default() -> Self {
         let data_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("podcast-tui");
+            .join("pdcst");
         let download_dir = dirs::download_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("Podcasts");

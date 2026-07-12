@@ -38,7 +38,7 @@ auto-queue does not exist yet (only a basic advance-on-complete). A three-lens
 audit (code / product / TUI-UX) is summarized at the bottom.
 
 **Merged to `main`:**
-- **Workspace**: `crates/podcast-tui` (binary) + `crates/wsola` (library),
+- **Workspace**: `crates/pdcst` (binary) + `crates/wsola` (library),
   independently versioned, deps + metadata hoisted to `[workspace.*]`.
 - **`wsola`**: a real, documented, thiserror, property-tested pure-Rust WSOLA
   time-stretch library (pitch-preserved tempo). Its own crate; will publish
@@ -274,11 +274,11 @@ Make it a portable single binary and ship it.
 - [ ] **Release workflow.** A `jhheider/rust-ci` `release.yml` caller (bin-name,
       target matrix, optional Homebrew tap), like edikt/penknife. Ties into the
       musl/static story above.
-- [ ] **Version reset (Jacob's call).** `podcast-tui` is at `1.0.0`, which
+- [ ] **Version reset (Jacob's call).** `pdcst` is at `1.0.0`, which
       overclaims. Reset to `0.x` before any real release. `wsola` versions
       independently. (Left for Jacob: which 0.x, and whether to tag at all.)
 - [ ] **Release workflow + name.** `release.yml` caller + musl target matrix;
-      also unify the identity (`pdcst` repo vs `podcast-tui` binary vs "Podcast
+      also unify the identity (`pdcst` repo vs `pdcst` binary vs "Podcast
       TUI" header). Jacob's call.
 
 ## Product fitness (product-designer + tui-ux agents, 2026-07-12)
@@ -328,7 +328,7 @@ search-box arrow keys seek instead of editing.
   (Phase E) as a deliberate, contained exception for portability.
 - **TLS: rustls + ring only.** Never openssl, native-tls, or aws-lc. reqwest is
   `default-features=false` + `rustls-no-provider` + `webpki-roots`, with ring
-  installed once at startup via `podcast_tui::ensure_crypto_provider()` (called
+  installed once at startup via `pdcst::ensure_crypto_provider()` (called
   at every reqwest client site so tests, which never run `main`, work).
 - **Design bar: a keyboard-first TUI** in the class of lazygit/k9s/newsboat.
   Reviewed with the user-level `tui-ux` agent.
@@ -338,9 +338,9 @@ search-box arrow keys seek instead of editing.
 
 ## Key technical reference (for a cold start)
 
-- **Layout**: Cargo workspace. `crates/podcast-tui` (bin), `crates/wsola` (lib).
+- **Layout**: Cargo workspace. `crates/pdcst` (bin), `crates/wsola` (lib).
   Deps hoisted in root `Cargo.toml` `[workspace.dependencies]`.
-- **Audio** (`crates/podcast-tui/src/audio/`):
+- **Audio** (`crates/pdcst/src/audio/`):
   - `player/mod.rs`: `AudioPlayer` (Send+Sync handle) -> `mpsc` -> a dedicated
     std thread that owns the `!Send` `MixerDeviceSink` and current `Player`.
     State via atomics; changes published on the `EventBus`. rodio 0.22:
@@ -361,7 +361,7 @@ search-box arrow keys seek instead of editing.
   `stretch(samples, sr, ch, tempo)`. Interleaved f32. Streaming output is
   bit-identical to one-shot (property-tested).
 - **DB** (`storage/`): sqlx + sqlite, migrations in
-  `crates/podcast-tui/migrations` (`migrate!("./migrations")`). Tables:
+  `crates/pdcst/migrations` (`migrate!("./migrations")`). Tables:
   subscriptions, episodes (has `playback_position_seconds`, `played`),
   `playback_state` (singleton id=1), queue. `playback.rs` has the
   built-but-unwired resume methods.

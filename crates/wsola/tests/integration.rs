@@ -1,5 +1,5 @@
 //! Public integration tests: drive `wsola` through its public API exactly as a
-//! consumer (podcast-tui) does, and assert the properties that matter -
+//! consumer (pdcst) does, and assert the properties that matter -
 //! duration scales with tempo, pitch does NOT, output stays finite and bounded,
 //! and streaming equals one-shot.
 

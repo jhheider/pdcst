@@ -79,7 +79,7 @@ impl Ui {
             View::Settings => "⚙️  Settings",
         };
 
-        let title = format!(" Podcast TUI - {} ", view_name);
+        let title = format!(" pdcst - {} ", view_name);
 
         let header = Paragraph::new(title)
             .style(
