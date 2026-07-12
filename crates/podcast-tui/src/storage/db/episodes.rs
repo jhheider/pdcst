@@ -66,6 +66,27 @@ impl Database {
         self.parse_episodes(rows)
     }
 
+    /// All episodes with a completed download on disk, oldest activity first
+    /// (least-recently-played, then oldest created). Used by cache retention to
+    /// evict the least-useful downloads first.
+    pub async fn get_downloaded_episodes(&self) -> Result<Vec<Episode>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, subscription_id, title, description, url, guid, published_at,
+                   duration_seconds, file_size_bytes, file_type, download_status, local_path,
+                   playback_position_seconds, played, last_played_at, created_at
+            FROM episodes
+            WHERE download_status = ?
+            ORDER BY COALESCE(last_played_at, created_at) ASC
+            "#,
+        )
+        .bind(DownloadStatus::Downloaded.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+
+        self.parse_episodes(rows)
+    }
+
     pub async fn get_episode(&self, id: Uuid) -> Result<Option<Episode>> {
         let row = sqlx::query(
             r#"

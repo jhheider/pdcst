@@ -110,6 +110,14 @@ it is foundational.
       `restore_playback_state` runs on launch: it reloads the last episode
       (shown, not auto-played) and restores rate/volume; pressing play resumes
       from the saved position. First slice of per-episode listen state.
+- [x] **Stage 3c - disk retention.** Done. `retention::RetentionManager` keeps
+      on-disk audio bounded. Config knobs (`delete_on_finish` default true,
+      `max_cache_episodes` default 50, `max_cache_megabytes` default 4096; a cap
+      of 0 = unlimited). Delete-on-finish removes a finished episode's download in
+      the completion path; the size caps evict least-recently-played downloads
+      first (never the currently-playing one) and reconcile rows whose file
+      vanished. Enforced at startup (which also `stream::purge_all`s stale stream
+      temp files) and re-swept every 6h so a long-open session cannot drift over.
 - [ ] **Real-audio validation (Jacob's ears).** The DSP is unit/property tested,
       but CI cannot hear the live path. Once PR #4 merges: run it, import the
       OPML, play an episode, confirm 1.5x sounds sped-up (not chipmunk), seek
