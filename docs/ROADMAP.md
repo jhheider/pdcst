@@ -146,17 +146,21 @@ tier-1 (the gate into Phase C) first.
       `page_down` use one `max_index()` over the current view's list, fixing the
       `_ => 0` no-ops in Queue/Search.
 
-**PR 2 - scrolling + display (next):**
-- [ ] **List scrolling.** Adopt `ListState` + `render_stateful_widget` as the one
-      selection+scroll mechanism (render takes `&mut AppState`); delete the
-      hand-rolled per-item `bg(DarkGray)` highlight; use `Modifier::REVERSED` and
-      honor `NO_COLOR`. `scroll_offset` field goes away.
-- [ ] **State visibility.** Mark the now-playing episode in lists; show
-      unplayed/in-progress/played per row (`Episode::progress_percentage`);
-      elapsed/duration (`12:34 / 45:00`) in the playback bar, not a bare percent;
-      queue depth in the footer.
-- [ ] **Panic-safe terminal restore** (Drop guard / panic hook); drop the unused
-      `EnableMouseCapture`; first-run guidance on an empty Subscriptions view.
+**PR 2 - scrolling + display (done):**
+- [x] **List scrolling.** `ListState` + `render_stateful_widget` is now the one
+      selection+scroll mechanism (`render` takes `&mut AppState`; `sync_list_selection`
+      clamps + points it each frame; reset in `set_view`). Hand-rolled
+      `bg(DarkGray)` highlight replaced with `Modifier::REVERSED` (theme-independent).
+      The dead `scroll_offset` field is gone.
+- [x] **State visibility.** Now-playing `>` marker in Episodes/Queue;
+      unplayed/in-progress/played markers (` `/`~`/`x`) per row; elapsed/duration
+      (`12:34 / 45:00`) in the playback bar; persistent "Up Next: N" in the footer
+      (queue kept fresh on any `QueueUpdated` + at startup).
+- [x] **Panic-safe terminal restore** via a `TerminalGuard` Drop; dropped mouse
+      capture; first-run guidance on an empty Subscriptions view. A `TestBackend`
+      render smoke test now covers every view (empty, populated, modals).
+- [ ] NO_COLOR (strip all fg/bg) deferred; `REVERSED` already makes the selection
+      theme-independent, which was the load-bearing part.
 
 **PR 3 - queue + search operability (the Phase C surface):**
 - [ ] **Subscribe from the running app.** Search focus model (typing vs browsing

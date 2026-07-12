@@ -19,7 +19,8 @@ use crate::storage::Database;
 use crate::ui::Ui;
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    cursor::Show,
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -134,28 +135,20 @@ impl App {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        // Setup terminal
+        // Setup terminal. No mouse capture: pdcst handles no mouse events, and
+        // capturing it would steal the terminal's own text selection/scroll.
         enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-        let backend = CrosstermBackend::new(stdout);
+        execute!(io::stdout(), EnterAlternateScreen)?;
+
+        // Restore the terminal on every exit path, including a panic in the run
+        // loop, so a crash never leaves the shell wedged in raw/alt-screen mode.
+        let _guard = TerminalGuard;
+
+        let backend = CrosstermBackend::new(io::stdout());
         let mut terminal = Terminal::new(backend)?;
 
         tracing::info!("Entering main loop");
-
-        // Run the main loop
-        let result = self.run_loop(&mut terminal).await;
-
-        // Restore terminal
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )?;
-        terminal.show_cursor()?;
-
-        result
+        self.run_loop(&mut terminal).await
     }
 
     async fn run_loop(
@@ -175,9 +168,14 @@ impl App {
             tracing::warn!("Failed to restore playback state: {}", e);
         }
 
+        // Load the queue so "Up Next: N" is correct from the first frame.
+        if let Err(e) = self.state.load_queue().await {
+            tracing::warn!("Failed to load queue: {}", e);
+        }
+
         // Initial draw
         terminal.draw(|f| {
-            self.ui.render(f, &self.state);
+            self.ui.render(f, &mut self.state);
         })?;
 
         // Create ticker for polling keyboard input (non-blocking)
@@ -194,7 +192,7 @@ impl App {
 
                             // Redraw UI
                             terminal.draw(|f| {
-                                self.ui.render(f, &self.state);
+                                self.ui.render(f, &mut self.state);
                             })?;
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -208,7 +206,7 @@ impl App {
 
                             // Redraw with refreshed state
                             terminal.draw(|f| {
-                                self.ui.render(f, &self.state);
+                                self.ui.render(f, &mut self.state);
                             })?;
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
@@ -255,7 +253,7 @@ impl App {
 
                     if needs_redraw {
                         terminal.draw(|f| {
-                            self.ui.render(f, &self.state);
+                            self.ui.render(f, &mut self.state);
                         })?;
                     }
                 }
@@ -263,5 +261,17 @@ impl App {
         }
 
         Ok(())
+    }
+}
+
+/// Restores the terminal (cooked mode, main screen, cursor shown) when dropped.
+/// Held for the lifetime of the run loop so a panic unwinding through it still
+/// leaves the shell usable.
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
     }
 }

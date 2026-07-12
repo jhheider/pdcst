@@ -1,6 +1,8 @@
 pub mod components;
 
 use crate::app::{AppState, state::Modal, state::View};
+use crate::models::Episode;
+use crate::utils::time::format_duration;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -9,6 +11,24 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Wrap},
 };
 
+/// Selected-row style: reverse video, so it reads correctly on any terminal
+/// theme (light or dark) rather than assuming a dark background.
+fn selection_style() -> Style {
+    Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+}
+
+/// A one-character listen-state marker for an episode row: played, in-progress
+/// (has a saved resume position), or unplayed.
+fn listen_marker(ep: &Episode) -> &'static str {
+    if ep.played {
+        "x"
+    } else if ep.playback_position_seconds > 0 {
+        "~"
+    } else {
+        " "
+    }
+}
+
 pub struct Ui;
 
 impl Ui {
@@ -16,7 +36,7 @@ impl Ui {
         Self
     }
 
-    pub fn render(&self, f: &mut Frame, state: &AppState) {
+    pub fn render(&self, f: &mut Frame, state: &mut AppState) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -79,32 +99,48 @@ impl Ui {
         f.render_widget(header, area);
     }
 
-    fn render_subscriptions(&self, f: &mut Frame, area: Rect, state: &AppState) {
+    fn render_subscriptions(&self, f: &mut Frame, area: Rect, state: &mut AppState) {
+        // First-run guidance: an empty Subscriptions view is the literal fresh
+        // install, so point at the two ways to add a podcast.
+        if state.subscriptions.is_empty() {
+            let empty = Paragraph::new(vec![
+                Line::from(""),
+                Line::from("No podcasts yet."),
+                Line::from(""),
+                Line::from("Press '/' to search and subscribe,"),
+                Line::from("or import an OPML file with --import <file>."),
+            ])
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::White))
+                    .title(" Subscriptions (0) ")
+                    .title_style(
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+            );
+            f.render_widget(empty, area);
+            return;
+        }
+
         let items: Vec<ListItem> = state
             .subscriptions
             .iter()
-            .enumerate()
-            .map(|(i, sub)| {
-                let style = if i == state.selected_index {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                        .bg(Color::DarkGray)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-
+            .map(|sub| {
                 let icon = if state
                     .current_subscription
                     .as_ref()
                     .is_some_and(|s| s.id == sub.id)
                 {
-                    "▶ "
+                    "> "
                 } else {
                     "  "
                 };
-
-                ListItem::new(format!("{}{}", icon, sub.title)).style(style)
+                ListItem::new(format!("{}{}", icon, sub.title))
             })
             .collect();
 
@@ -120,53 +156,49 @@ impl Ui {
                             .add_modifier(Modifier::BOLD),
                     ),
             )
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            );
+            .highlight_style(selection_style());
 
-        f.render_widget(list, area);
+        state.sync_list_selection();
+        f.render_stateful_widget(list, area, &mut state.list_state);
     }
 
-    fn render_episodes(&self, f: &mut Frame, area: Rect, state: &AppState) {
+    fn render_episodes(&self, f: &mut Frame, area: Rect, state: &mut AppState) {
         let title = state
             .current_subscription
             .as_ref()
-            .map(|s| s.title.as_str())
-            .unwrap_or("Episodes");
+            .map(|s| s.title.clone())
+            .unwrap_or_else(|| "Episodes".to_string());
+        let playing_id = state.current_episode.as_ref().map(|e| e.id);
 
         let items: Vec<ListItem> = state
             .episodes
             .iter()
-            .enumerate()
-            .map(|(i, ep)| {
-                let style = if i == state.selected_index {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                        .bg(Color::DarkGray)
-                } else if ep.played {
+            .map(|ep| {
+                // Dim finished episodes so the unheard ones stand out.
+                let base = if ep.played {
                     Style::default().fg(Color::DarkGray)
                 } else {
                     Style::default().fg(Color::White)
                 };
 
-                let played_icon = if ep.played { "✓" } else { " " };
+                let now = if playing_id == Some(ep.id) { ">" } else { " " };
+                let listen = listen_marker(ep);
                 let download_icon = match &ep.download_status {
-                    crate::models::DownloadStatus::Downloaded => "💾",
-                    crate::models::DownloadStatus::Downloading => "⏬",
-                    crate::models::DownloadStatus::Failed => "❌",
-                    crate::models::DownloadStatus::NotDownloaded => "  ",
+                    crate::models::DownloadStatus::Downloaded => "v",
+                    crate::models::DownloadStatus::Downloading => "|",
+                    crate::models::DownloadStatus::Failed => "!",
+                    crate::models::DownloadStatus::NotDownloaded => " ",
                 };
 
-                let duration = ep.duration_formatted();
                 let text = format!(
-                    "{} {} {} | {}",
-                    played_icon, download_icon, ep.title, duration
+                    "{}{} {} {} | {}",
+                    now,
+                    listen,
+                    download_icon,
+                    ep.title,
+                    ep.duration_formatted()
                 );
-
-                ListItem::new(text).style(style)
+                ListItem::new(text).style(base)
             })
             .collect();
 
@@ -182,20 +214,17 @@ impl Ui {
                             .add_modifier(Modifier::BOLD),
                     ),
             )
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            );
+            .highlight_style(selection_style());
 
-        f.render_widget(list, area);
+        state.sync_list_selection();
+        f.render_stateful_widget(list, area, &mut state.list_state);
     }
 
-    fn render_queue(&self, f: &mut Frame, area: Rect, state: &AppState) {
+    fn render_queue(&self, f: &mut Frame, area: Rect, state: &mut AppState) {
         if state.queue_items.is_empty() {
             let empty_msg = Paragraph::new(vec![
                 Line::from(""),
-                Line::from("📋 Queue is empty"),
+                Line::from("Up Next is empty"),
                 Line::from(""),
                 Line::from("Press 'a' on an episode to add it to the queue"),
             ])
@@ -205,7 +234,7 @@ impl Ui {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::White))
-                    .title(" Queue (0) ")
+                    .title(" Up Next (0) ")
                     .title_style(
                         Style::default()
                             .fg(Color::Green)
@@ -217,25 +246,22 @@ impl Ui {
             return;
         }
 
+        let playing_id = state.current_episode.as_ref().map(|e| e.id);
         let items: Vec<ListItem> = state
             .queue_items
             .iter()
             .enumerate()
             .map(|(i, ep)| {
-                let style = if i == state.selected_index {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                        .bg(Color::DarkGray)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-
-                let number = format!("{}.", i + 1);
-                let duration = ep.duration_formatted();
-                let text = format!("{:3} {} | {}", number, ep.title, duration);
-
-                ListItem::new(text).style(style)
+                let now = if playing_id == Some(ep.id) { ">" } else { " " };
+                let text = format!(
+                    "{}{} {:2}. {} | {}",
+                    now,
+                    listen_marker(ep),
+                    i + 1,
+                    ep.title,
+                    ep.duration_formatted()
+                );
+                ListItem::new(text)
             })
             .collect();
 
@@ -244,23 +270,20 @@ impl Ui {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::White))
-                    .title(format!(" Queue ({}) ", state.queue_items.len()))
+                    .title(format!(" Up Next ({}) ", state.queue_items.len()))
                     .title_style(
                         Style::default()
                             .fg(Color::Green)
                             .add_modifier(Modifier::BOLD),
                     ),
             )
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            );
+            .highlight_style(selection_style());
 
-        f.render_widget(list, area);
+        state.sync_list_selection();
+        f.render_stateful_widget(list, area, &mut state.list_state);
     }
 
-    fn render_search(&self, f: &mut Frame, area: Rect, state: &AppState) {
+    fn render_search(&self, f: &mut Frame, area: Rect, state: &mut AppState) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -326,21 +349,7 @@ impl Ui {
             let items: Vec<ListItem> = state
                 .search_results
                 .iter()
-                .enumerate()
-                .map(|(i, result)| {
-                    let style = if i == state.selected_index {
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD)
-                            .bg(Color::DarkGray)
-                    } else {
-                        Style::default().fg(Color::White)
-                    };
-
-                    let text = format!("{} - {}", result.title, result.artist);
-
-                    ListItem::new(text).style(style)
-                })
+                .map(|result| ListItem::new(format!("{} - {}", result.title, result.artist)))
                 .collect();
 
             let list = List::new(items)
@@ -355,13 +364,10 @@ impl Ui {
                                 .add_modifier(Modifier::BOLD),
                         ),
                 )
-                .highlight_style(
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                );
+                .highlight_style(selection_style());
 
-            f.render_widget(list, chunks[1]);
+            state.sync_list_selection();
+            f.render_stateful_widget(list, chunks[1], &mut state.list_state);
         }
     }
 
@@ -433,22 +439,21 @@ impl Ui {
             ])
             .split(area);
 
-        // Playback status line
+        // Playback status line: now-playing plus a persistent "Up Next: N" so
+        // the queue depth is visible from any view (the auto-queue is the point).
+        let up_next = format!("Up Next: {}", state.queue_items.len());
         let status_text = if let Some(episode) = &state.current_episode {
-            let status_icon = if state.is_playing {
-                "▶️ "
-            } else {
-                "⏸️ "
-            };
+            let status_icon = if state.is_playing { ">" } else { "||" };
             format!(
-                "{}{} | Speed: {:.1}x | Volume: {:.0}%",
+                "{} {} | {:.1}x | Vol {:.0}% | {}",
                 status_icon,
                 episode.title,
                 state.playback_speed,
-                state.volume * 100.0
+                state.volume * 100.0,
+                up_next
             )
         } else {
-            "No episode playing".to_string()
+            format!("No episode playing | {}", up_next)
         };
 
         let status = Paragraph::new(status_text)
@@ -457,20 +462,20 @@ impl Ui {
 
         f.render_widget(status, chunks[0]);
 
-        // Progress bar
-        if state.is_playing || state.current_episode.is_some() {
-            let progress = if let Some(ep) = &state.current_episode {
-                if let Some(duration) = ep.duration_seconds {
-                    if duration > 0 {
-                        ((state.playback_position / duration as f64) * 100.0) as u16
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                }
+        // Progress bar, labelled with elapsed / duration (12:34 / 45:00) rather
+        // than a bare percent.
+        if let Some(ep) = &state.current_episode {
+            let elapsed = state.playback_position.max(0.0) as i64;
+            let total = ep.duration_seconds.unwrap_or(0).max(0);
+            let percent = if total > 0 {
+                ((elapsed as f64 / total as f64) * 100.0) as u16
             } else {
                 0
+            };
+            let label = if total > 0 {
+                format!("{} / {}", format_duration(elapsed), format_duration(total))
+            } else {
+                format_duration(elapsed)
             };
 
             let gauge = Gauge::default()
@@ -478,11 +483,10 @@ impl Ui {
                 .gauge_style(
                     Style::default()
                         .fg(Color::Cyan)
-                        .bg(Color::Black)
                         .add_modifier(Modifier::BOLD),
                 )
-                .percent(progress.min(100))
-                .label(format!("{:.0}%", progress));
+                .percent(percent.min(100))
+                .label(label);
 
             f.render_widget(gauge, chunks[1]);
         } else {
