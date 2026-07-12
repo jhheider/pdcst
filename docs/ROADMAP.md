@@ -222,10 +222,19 @@ exists; do not treat it as a nice-to-have.
       the row shows a `Qv`/`Q^` marker and the Settings view shows the global
       auto-queue config. This is what turns the feature on end-to-end (auto_queue
       defaults off). Cycle + DB round-trip tested.
-- [ ] **PR 4 - completion fold.** Fold the completion advance
-      (`app/auto_advance.rs`) and `n` into one `QueueManager` path that marks
-      played + removes + advances, respecting listen state (auto-add only
-      unplayed - already true, since new == unplayed). Refactor, no new behavior.
+- [x] **PR 4 - completion fold.** `QueueManager::advance(finished_id,
+      mark_played)` is now the single path for both natural completion (mark
+      played) and manual skip (`n`, which also marks played so a skip is not
+      auto-re-queued) plus retry-on-failure (mark_played=false). It marks played,
+      removes from the queue, and returns the next episode; the caller plays it.
+      `auto_advance.rs` and `play_next_in_queue` both call it. Behaviour-preserving
+      refactor + a first unit test on the completion/skip logic.
+
+**Phase C is complete.** The five requirements of "the deal" are met: auto-fill
+at publish time (PR 2), programmable max depth (PR 2), smart interleave (PR 2),
+never-clobber-current (PR 2), and listen-state tracking (Phase A + B markers,
+auto-add-only-unplayed via `is_new`). Live validation (mark a feed with `A`,
+refresh, watch Up Next fill) is Jacob's to run.
 - Depends on: a working editable queue (Phase B, done), resume/listen-state
   (Phase A, done), and refresh (Phase D) as the trigger source.
 

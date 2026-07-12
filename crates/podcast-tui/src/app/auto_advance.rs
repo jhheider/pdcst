@@ -51,19 +51,8 @@ pub(crate) fn spawn(deps: AutoAdvance) {
                         completed_episode_id
                     );
 
-                    // Mark episode as played
-                    match db.mark_episode_played(completed_episode_id, true).await {
-                        Err(e) => {
-                            tracing::error!("Failed to mark episode as played: {}", e);
-                        }
-                        _ => {
-                            event_bus.publish(StateEvent::EpisodeMarkedPlayed {
-                                episode_id: completed_episode_id,
-                            });
-                        }
-                    }
-
-                    // Delete-on-finish: reclaim a finished episode's download.
+                    // Delete-on-finish: reclaim the finished episode's download
+                    // before it leaves the queue.
                     if delete_on_finish
                         && let Ok(Some(finished)) = db.get_episode(completed_episode_id).await
                         && finished.is_downloaded()
@@ -81,92 +70,46 @@ pub(crate) fn spawn(deps: AutoAdvance) {
                         }
                     }
 
-                    // Remove from queue
-                    if let Err(e) = queue_manager.remove_episode(completed_episode_id).await {
-                        tracing::error!("Failed to remove episode from queue: {}", e);
-                    }
-
-                    // Play next episode in queue (with retry on failure)
-                    loop {
-                        match queue_manager.get_next().await {
-                            Ok(Some(next_item)) => {
-                                let next_episode_id = next_item.episode_id;
-                                tracing::info!("Auto-advancing to next episode in queue");
-
-                                // Load the episode and play it (from the top),
-                                // reusing the shared play path so auto-advance
-                                // streams to disk exactly like a manual play.
-                                let load_result = match db.get_episode(next_episode_id).await {
-                                    Ok(Some(next_episode)) => {
-                                        match state::load_and_play(
-                                            &audio_player,
-                                            &audio_streamer,
-                                            &next_episode,
-                                            std::time::Duration::ZERO,
-                                        )
-                                        .await
-                                        {
-                                            Ok(()) => {
-                                                tracing::info!(
-                                                    "Auto-playing: {}",
-                                                    next_episode.title
-                                                );
-                                                event_bus.publish(StateEvent::QueueAdvanced {
-                                                    next_episode_id,
-                                                });
-                                                Ok(())
-                                            }
-                                            Err(e) => Err(format!("Failed to play: {}", e)),
-                                        }
-                                    }
-                                    Ok(None) => Err(format!(
-                                        "Episode {} not found in database",
-                                        next_episode_id
-                                    )),
-                                    Err(e) => Err(format!("Database error: {}", e)),
-                                };
-
-                                match load_result {
-                                    Ok(_) => {
-                                        // Successfully loaded and started playing
-                                        break;
-                                    }
-                                    Err(error_msg) => {
-                                        // Failed to play this episode - emit error and try next
-                                        tracing::error!(
-                                            "Failed to auto-play episode {}: {}",
-                                            next_episode_id,
-                                            error_msg
-                                        );
-                                        event_bus.publish(StateEvent::PlaybackError {
-                                            error: format!("Auto-play failed: {}", error_msg),
-                                        });
-
-                                        // Remove failed episode from queue and try next
-                                        if let Err(e) =
-                                            queue_manager.remove_episode(next_episode_id).await
-                                        {
-                                            tracing::error!(
-                                                "Failed to remove failed episode from queue: {}",
-                                                e
-                                            );
-                                            break;
-                                        }
-
-                                        // Continue loop to try next episode
-                                    }
-                                }
-                            }
-                            Ok(None) => {
-                                tracing::info!("Queue empty, no more episodes to play");
+                    // Advance the queue via the shared path (mark played, remove,
+                    // take next), then play it - retrying past any that fail to
+                    // load. `load_and_play` streams to disk like a manual play.
+                    let mut next = match queue_manager.advance(completed_episode_id, true).await {
+                        Ok(next) => next,
+                        Err(e) => {
+                            tracing::error!("Failed to advance queue: {}", e);
+                            None
+                        }
+                    };
+                    while let Some(episode) = next {
+                        match state::load_and_play(
+                            &audio_player,
+                            &audio_streamer,
+                            &episode,
+                            std::time::Duration::ZERO,
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                tracing::info!("Auto-playing: {}", episode.title);
+                                event_bus.publish(StateEvent::QueueAdvanced {
+                                    next_episode_id: episode.id,
+                                });
                                 break;
                             }
                             Err(e) => {
-                                tracing::error!("Failed to get next from queue: {}", e);
+                                tracing::error!("Failed to auto-play '{}': {}", episode.title, e);
                                 event_bus.publish(StateEvent::PlaybackError {
-                                    error: format!("Queue error: {}", e),
+                                    error: format!("Auto-play failed: {}", e),
                                 });
-                                break;
+                                // Drop the failed episode (do not mark it played)
+                                // and try the next one.
+                                next = match queue_manager.advance(episode.id, false).await {
+                                    Ok(next) => next,
+                                    Err(e) => {
+                                        tracing::error!("Failed to advance past failure: {}", e);
+                                        None
+                                    }
+                                };
                             }
                         }
                     }
