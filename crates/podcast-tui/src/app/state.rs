@@ -44,6 +44,14 @@ pub enum View {
     Settings,
 }
 
+/// Where keystrokes go in the Search view: into the query box, or into the
+/// results list (where Enter subscribes).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SearchFocus {
+    Input,
+    Results,
+}
+
 /// The four top-level views the number keys and Tab cycle through. Episodes is a
 /// drill-down of Subscriptions (reached with Enter, left with Esc), not a tab of
 /// its own, so number/Tab navigation and the help screen all share one model.
@@ -106,6 +114,8 @@ pub struct AppState {
     pub modal: Modal,
     pub search_input: String,
     pub search_cursor: usize,
+    /// Whether keystrokes go to the query box or the results list.
+    pub search_focus: SearchFocus,
     pub status_message: Option<StatusMessage>,
     pub show_help: bool,
     /// Set by the quit key; the run loop checks it and exits.
@@ -193,6 +203,7 @@ impl AppState {
             modal: Modal::None,
             search_input: String::new(),
             search_cursor: 0,
+            search_focus: SearchFocus::Input,
             status_message: None,
             show_help: false,
             should_quit: false,
@@ -252,6 +263,25 @@ impl AppState {
         // New view, new list: clear the scroll offset and selection so the next
         // render starts at the top rather than inheriting the old view's scroll.
         self.list_state = ListState::default();
+        // Entering Search always starts in the query box.
+        if view == View::Search {
+            self.search_focus = SearchFocus::Input;
+        }
+    }
+
+    /// Move focus to the results list after a search returns hits, so j/k browse
+    /// and Enter subscribes. Called by the input handler when a query runs.
+    pub fn focus_search_results(&mut self) {
+        if !self.search_results.is_empty() {
+            self.search_focus = SearchFocus::Results;
+            self.selected_index = 0;
+            self.list_state = ListState::default();
+        }
+    }
+
+    /// Return focus to the query box (e.g. Esc from the results list).
+    pub fn focus_search_input(&mut self) {
+        self.search_focus = SearchFocus::Input;
     }
 
     /// Number of items in the current view's list (0 for non-list views).
@@ -306,11 +336,27 @@ impl AppState {
             }
             View::Episodes => {
                 if let Some(episode) = self.episodes.get(self.selected_index) {
-                    // Play episode
                     self.play_episode(episode.clone()).await?;
                 }
             }
-            _ => {}
+            View::Queue => {
+                // Enter on a queue item jumps to it and plays.
+                if let Some(episode) = self.queue_items.get(self.selected_index).cloned() {
+                    self.play_episode(episode).await?;
+                }
+            }
+            View::Search => {
+                // Enter on a result subscribes (only meaningful with focus on the
+                // results list; the input gate handles Enter while typing).
+                if self.search_focus == SearchFocus::Results
+                    && let Some(result) = self.search_results.get(self.selected_index).cloned()
+                {
+                    let title = result.title.clone();
+                    self.subscribe_from_search_result(&result).await?;
+                    self.set_status(format!("Subscribed to {}", title));
+                }
+            }
+            View::Settings => {}
         }
         Ok(())
     }
@@ -393,8 +439,16 @@ impl AppState {
 
     // Playback control methods
 
+    /// Skip to the next queued episode. The currently-playing episode is the
+    /// head of the queue, so drop it first - otherwise `get_next` returns it and
+    /// we would replay the same episode instead of advancing.
     pub async fn play_next_in_queue(&mut self) -> Result<()> {
-        tracing::info!("Playing next episode in queue");
+        tracing::info!("Skipping to next episode in queue");
+
+        if let Some(current) = self.current_episode.clone() {
+            // No-op if the current episode was not playing from the queue.
+            let _ = self.queue_manager.remove_episode(current.id).await;
+        }
 
         match self.queue_manager.get_next().await? {
             Some(next_item) => {
@@ -408,6 +462,17 @@ impl AppState {
                 Ok(())
             }
         }
+    }
+
+    /// Remove the selected episode from the queue (Queue view only).
+    pub async fn remove_selected_from_queue(&mut self) -> Result<()> {
+        if self.current_view == View::Queue
+            && let Some(episode) = self.queue_items.get(self.selected_index).cloned()
+        {
+            self.queue_manager.remove_episode(episode.id).await?;
+            tracing::info!("Removed '{}' from queue", episode.title);
+        }
+        Ok(())
     }
 
     pub async fn restart_current_episode(&mut self) -> Result<()> {

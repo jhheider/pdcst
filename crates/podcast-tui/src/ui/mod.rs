@@ -1,6 +1,6 @@
 pub mod components;
 
-use crate::app::{AppState, state::Modal, state::View};
+use crate::app::{AppState, state::Modal, state::SearchFocus, state::View};
 use crate::models::Episode;
 use crate::utils::time::format_duration;
 use ratatui::{
@@ -292,28 +292,39 @@ impl Ui {
             ])
             .split(area);
 
+        // The active pane (query box vs results list) gets a cyan border; the
+        // inactive one is dimmed, so it is always clear where keys will go.
+        let input_focused = state.search_focus == SearchFocus::Input;
+        let input_border = if input_focused {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        };
+
         // Search input box
         let input = Paragraph::new(state.search_input.as_str())
             .style(Style::default().fg(Color::Yellow))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan))
-                    .title(" 🔍 Search Podcasts (iTunes) ")
+                    .border_style(Style::default().fg(input_border))
+                    .title(" Search Podcasts (iTunes) ")
                     .title_style(
                         Style::default()
-                            .fg(Color::Cyan)
+                            .fg(input_border)
                             .add_modifier(Modifier::BOLD),
                     ),
             );
 
         f.render_widget(input, chunks[0]);
 
-        // Show cursor in search box
-        f.set_cursor_position((
-            chunks[0].x + state.search_cursor as u16 + 1,
-            chunks[0].y + 1,
-        ));
+        // Show the cursor only while the box is focused.
+        if input_focused {
+            f.set_cursor_position((
+                chunks[0].x + state.search_cursor as u16 + 1,
+                chunks[0].y + 1,
+            ));
+        }
 
         // Search results
         if state.search_results.is_empty() {
@@ -352,12 +363,20 @@ impl Ui {
                 .map(|result| ListItem::new(format!("{} - {}", result.title, result.artist)))
                 .collect();
 
+            let results_border = if input_focused {
+                Color::White
+            } else {
+                Color::Cyan
+            };
             let list = List::new(items)
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::White))
-                        .title(format!(" Results ({}) ", state.search_results.len()))
+                        .border_style(Style::default().fg(results_border))
+                        .title(format!(
+                            " Results ({}) - Enter to subscribe ",
+                            state.search_results.len()
+                        ))
                         .title_style(
                             Style::default()
                                 .fg(Color::Green)
@@ -569,13 +588,14 @@ impl Ui {
             Line::from("  [/]      Speed down/up"),
             Line::from("  a        Add to queue"),
             Line::from("  d        Download episode"),
-            Line::from("  x        Delete download"),
+            Line::from("  x        Remove (queue) / delete download"),
+            Line::from("  n        Skip to next in queue"),
             Line::from("  r        Refresh feed"),
             Line::from("  R        Refresh all"),
             Line::from("  s        Toggle played"),
             Line::from(""),
             Line::from(Span::styled("Other:", Style::default().fg(Color::Cyan))),
-            Line::from("  Enter    Select/Subscribe"),
+            Line::from("  Enter    Open / play / subscribe"),
             Line::from("  /        Search mode"),
             Line::from("  Esc      Close modal/Back"),
             Line::from("  ?        This help"),

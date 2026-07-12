@@ -38,11 +38,14 @@ impl App {
             Modal::None => {}
         }
 
-        // Handle search input. While the box has focus, every printable key
-        // (digits and 'q' included) types into it; only Esc (exit) and Enter
-        // (run) escape to the global handlers, so typing can never switch views
-        // or quit the app. Arrow/Page keys fall through to navigate results.
-        if self.state.current_view == View::Search && !matches!(key, KeyCode::Esc) {
+        // Handle search input. Only while the query box has focus: every
+        // printable key (digits and 'q' included) types into it; Esc and Enter
+        // escape to the global handlers. Once results are focused, keys fall
+        // through so j/k browse and Enter subscribes.
+        if self.state.current_view == View::Search
+            && self.state.search_focus == state::SearchFocus::Input
+            && !matches!(key, KeyCode::Esc)
+        {
             match key {
                 KeyCode::Char(c) if !c.is_control() => {
                     self.state.append_search_char(c);
@@ -53,7 +56,7 @@ impl App {
                     return Ok(());
                 }
                 KeyCode::Enter => {
-                    // Trigger search
+                    // Run the search, then move focus to the results list.
                     if !self.state.search_input.is_empty() {
                         self.state.set_status("Searching...".to_string());
                         match self
@@ -62,8 +65,8 @@ impl App {
                             .await
                         {
                             Ok(_) => {
-                                self.state.selected_index = 0;
                                 self.state.clear_status();
+                                self.state.focus_search_results();
                             }
                             Err(e) => {
                                 self.state.show_error(format!("Search failed: {}", e));
@@ -90,12 +93,18 @@ impl App {
                 return Ok(());
             }
 
-            // Esc - close a modal, leave search, or drill back out of Episodes.
+            // Esc - close a modal, step back within Search, leave Search, or
+            // drill back out of Episodes.
             KeyCode::Esc => {
                 if self.state.modal != Modal::None {
                     self.state.close_modal();
                 } else if self.state.current_view == View::Search {
-                    self.state.exit_search_mode();
+                    // From results, step back to the query box; from the box, exit.
+                    if self.state.search_focus == state::SearchFocus::Results {
+                        self.state.focus_search_input();
+                    } else {
+                        self.state.exit_search_mode();
+                    }
                 } else if self.state.current_view == View::Episodes {
                     self.state.set_view(View::Subscriptions);
                 }
@@ -259,14 +268,21 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('x') => match self.state.delete_selected_download().await {
-                Err(e) => {
-                    self.state.show_error(format!("Failed to delete: {}", e));
+            // 'x' means "remove": from the Queue, drop the selected item; from
+            // Episodes, delete its download. Each is a no-op in the other view.
+            KeyCode::Char('x') => {
+                if self.state.current_view == View::Queue {
+                    match self.state.remove_selected_from_queue().await {
+                        Err(e) => self.state.show_error(format!("Failed to remove: {}", e)),
+                        _ => self.state.set_status("Removed from queue".to_string()),
+                    }
+                } else {
+                    match self.state.delete_selected_download().await {
+                        Err(e) => self.state.show_error(format!("Failed to delete: {}", e)),
+                        _ => self.state.set_status("Download deleted".to_string()),
+                    }
                 }
-                _ => {
-                    self.state.set_status("Download deleted".to_string());
-                }
-            },
+            }
             KeyCode::Char('r') => {
                 self.state.set_status("Refreshing feed...".to_string());
                 match self.state.refresh_selected_subscription().await {
