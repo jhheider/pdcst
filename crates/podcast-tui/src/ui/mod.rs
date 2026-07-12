@@ -140,7 +140,13 @@ impl Ui {
                 } else {
                     "  "
                 };
-                ListItem::new(format!("{}{}", icon, sub.title))
+                // Auto-queue indicator: Qv = add to bottom, Q^ = add to top.
+                let aq = match (sub.auto_queue, sub.auto_queue_to_top) {
+                    (false, _) => "   ",
+                    (true, false) => "Qv ",
+                    (true, true) => "Q^ ",
+                };
+                ListItem::new(format!("{}{}{}", icon, aq, sub.title))
             })
             .collect();
 
@@ -426,6 +432,34 @@ impl Ui {
             )),
             Line::from(""),
             Line::from(Span::styled(
+                "Auto-queue:",
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::from(Span::styled(
+                format!("  Max depth: {}", state.config.queue_max_depth),
+                Style::default().fg(Color::White),
+            )),
+            Line::from(Span::styled(
+                format!(
+                    "  Default direction: {}",
+                    if state.config.auto_queue_to_top_default {
+                        "top"
+                    } else {
+                        "bottom"
+                    }
+                ),
+                Style::default().fg(Color::White),
+            )),
+            Line::from(Span::styled(
+                format!("  Smart interleave: {}", state.config.smart_interleave),
+                Style::default().fg(Color::White),
+            )),
+            Line::from(Span::styled(
+                "  Toggle a feed's auto-queue with 'A' in Subscriptions.",
+                Style::default().fg(Color::Gray),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
                 "Press '?' for help",
                 Style::default().fg(Color::Gray),
             )),
@@ -593,6 +627,7 @@ impl Ui {
             Line::from("  r        Refresh feed"),
             Line::from("  R        Refresh all"),
             Line::from("  s        Toggle played"),
+            Line::from("  A        Cycle auto-queue (off/bottom/top)"),
             Line::from(""),
             Line::from(Span::styled("Other:", Style::default().fg(Color::Cyan))),
             Line::from("  Enter    Open / play / subscribe"),

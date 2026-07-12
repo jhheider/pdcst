@@ -216,11 +216,16 @@ exists; do not treat it as a nice-to-have.
       `nearest_legal_position` (no two adjacent episodes of the same podcast).
       Unit-tested (`nearest_legal_position`) + integration-tested (`auto_enqueue`
       push/unshift/max-depth/never-clobber/interleave).
-- [ ] **PR 3 - per-sub toggle UI + settings view + completion fold.** Bind a key
-      to toggle a sub's `auto_queue` / direction; show the config in Settings;
-      fold the completion advance (`app/auto_advance.rs`) and `n` into one
-      `QueueManager` path that marks played + removes + advances, respecting
-      listen state (auto-add only unplayed - already true, since new == unplayed).
+- [x] **PR 3 - per-sub toggle UI + settings view.** `A` in the Subscriptions
+      view cycles a feed's auto-queue off -> bottom -> top -> off
+      (`cycle_selected_auto_queue` + `Database::update_subscription_auto_queue`);
+      the row shows a `Qv`/`Q^` marker and the Settings view shows the global
+      auto-queue config. This is what turns the feature on end-to-end (auto_queue
+      defaults off). Cycle + DB round-trip tested.
+- [ ] **PR 4 - completion fold.** Fold the completion advance
+      (`app/auto_advance.rs`) and `n` into one `QueueManager` path that marks
+      played + removes + advances, respecting listen state (auto-add only
+      unplayed - already true, since new == unplayed). Refactor, no new behavior.
 - Depends on: a working editable queue (Phase B, done), resume/listen-state
   (Phase A, done), and refresh (Phase D) as the trigger source.
 
