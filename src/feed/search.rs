@@ -193,7 +193,10 @@ mod tests {
         };
 
         let result = search.convert_itunes_result(itunes_result);
-        assert!(result.is_none(), "Should return None when feed_url is missing");
+        assert!(
+            result.is_none(),
+            "Should return None when feed_url is missing"
+        );
     }
 
     #[test]

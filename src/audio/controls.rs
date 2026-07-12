@@ -54,7 +54,11 @@ impl PlaybackControls {
     }
 
     pub async fn skip_backward(&self, seconds: u64) {
-        if let Err(e) = self.player.seek_backward(Duration::from_secs(seconds)).await {
+        if let Err(e) = self
+            .player
+            .seek_backward(Duration::from_secs(seconds))
+            .await
+        {
             tracing::warn!("Failed to skip backward: {}", e);
         }
     }

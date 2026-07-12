@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]

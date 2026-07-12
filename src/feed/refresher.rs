@@ -63,7 +63,13 @@ impl FeedRefresher {
     }
 
     pub async fn refresh_one(&self, subscription: Subscription) -> Result<()> {
-        Self::refresh_feed(self.fetcher.clone(), self.db.clone(), self.event_bus.clone(), subscription).await
+        Self::refresh_feed(
+            self.fetcher.clone(),
+            self.db.clone(),
+            self.event_bus.clone(),
+            subscription,
+        )
+        .await
     }
 
     async fn refresh_feed(
@@ -75,7 +81,9 @@ impl FeedRefresher {
         tracing::debug!("Refreshing feed: {}", sub.title);
 
         // Emit feed refresh started event
-        event_bus.publish(StateEvent::FeedRefreshStarted { subscription_id: sub.id });
+        event_bus.publish(StateEvent::FeedRefreshStarted {
+            subscription_id: sub.id,
+        });
 
         match async {
             let rss_content = fetcher.fetch_feed(&sub.rss_url).await?;
@@ -95,10 +103,16 @@ impl FeedRefresher {
             // Update last refreshed timestamp
             db.update_subscription_last_refreshed(sub.id).await?;
 
-            tracing::info!("Refreshed feed: {} ({} new episodes)", sub.title, new_episodes);
+            tracing::info!(
+                "Refreshed feed: {} ({} new episodes)",
+                sub.title,
+                new_episodes
+            );
 
             Ok::<usize, anyhow::Error>(new_episodes)
-        }.await {
+        }
+        .await
+        {
             Ok(new_episodes) => {
                 // Emit feed refresh completed event
                 event_bus.publish(StateEvent::FeedRefreshCompleted {

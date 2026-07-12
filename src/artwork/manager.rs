@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Manages downloading and caching of podcast artwork
@@ -42,11 +42,11 @@ impl ArtworkManager {
         // Check cache first
         {
             let cache = self.cache.read().await;
-            if let Some(path) = cache.get(&subscription_id) {
-                if path.exists() {
-                    tracing::debug!("Artwork cache hit for {}", subscription_id);
-                    return Ok(path.clone());
-                }
+            if let Some(path) = cache.get(&subscription_id)
+                && path.exists()
+            {
+                tracing::debug!("Artwork cache hit for {}", subscription_id);
+                return Ok(path.clone());
             }
         }
 
@@ -89,7 +89,10 @@ impl ArtworkManager {
         tracing::info!("Downloaded artwork to: {}", filepath.display());
 
         // Update cache
-        self.cache.write().await.insert(subscription_id, filepath.clone());
+        self.cache
+            .write()
+            .await
+            .insert(subscription_id, filepath.clone());
 
         Ok(filepath)
     }
@@ -106,13 +109,13 @@ impl ArtworkManager {
     pub async fn delete_artwork(&self, subscription_id: Uuid) -> Result<()> {
         let mut cache = self.cache.write().await;
 
-        if let Some(path) = cache.remove(&subscription_id) {
-            if path.exists() {
-                fs::remove_file(&path)
-                    .await
-                    .with_context(|| format!("Failed to delete artwork: {}", path.display()))?;
-                tracing::info!("Deleted artwork: {}", path.display());
-            }
+        if let Some(path) = cache.remove(&subscription_id)
+            && path.exists()
+        {
+            fs::remove_file(&path)
+                .await
+                .with_context(|| format!("Failed to delete artwork: {}", path.display()))?;
+            tracing::info!("Deleted artwork: {}", path.display());
         }
 
         Ok(())
@@ -140,13 +143,12 @@ impl ArtworkManager {
 
             if path.is_file() {
                 // Extract subscription ID from filename
-                if let Some(filename) = path.file_stem() {
-                    if let Some(filename_str) = filename.to_str() {
-                        if let Ok(uuid) = Uuid::parse_str(filename_str) {
-                            cache.insert(uuid, path);
-                            count += 1;
-                        }
-                    }
+                if let Some(filename) = path.file_stem()
+                    && let Some(filename_str) = filename.to_str()
+                    && let Ok(uuid) = Uuid::parse_str(filename_str)
+                {
+                    cache.insert(uuid, path);
+                    count += 1;
                 }
             }
         }

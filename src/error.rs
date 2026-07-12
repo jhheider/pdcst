@@ -21,10 +21,7 @@ pub enum PodcastError {
 
     // Streaming errors
     #[error("Failed to stream from URL {url}: {source}")]
-    StreamingFailed {
-        url: String,
-        source: reqwest::Error,
-    },
+    StreamingFailed { url: String, source: reqwest::Error },
 
     #[error("HTTP error {status} while fetching {url}")]
     HttpError { status: u16, url: String },
@@ -53,10 +50,7 @@ pub enum PodcastError {
     },
 
     #[error("Failed to fetch feed from {url}: {source}")]
-    FeedFetch {
-        url: String,
-        source: reqwest::Error,
-    },
+    FeedFetch { url: String, source: reqwest::Error },
 
     #[error("Invalid feed URL: {0}")]
     InvalidFeedUrl(String),

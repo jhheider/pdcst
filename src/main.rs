@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
+use podcast_tui::Config;
 use podcast_tui::app::App;
 use podcast_tui::utils::logging;
-use podcast_tui::Config;
 
 #[derive(Parser, Debug)]
 #[command(name = "podcast-tui")]

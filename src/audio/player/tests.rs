@@ -56,11 +56,19 @@ async fn test_speed_clamps_to_valid_range() {
 
     player.set_speed(0.05).await;
     let speed = player.get_speed().await;
-    assert!(speed >= 0.1, "Speed should be clamped to 0.1, got {}", speed);
+    assert!(
+        speed >= 0.1,
+        "Speed should be clamped to 0.1, got {}",
+        speed
+    );
 
     player.set_speed(10.0).await;
     let speed = player.get_speed().await;
-    assert!(speed <= 4.0, "Speed should be clamped to 4.0, got {}", speed);
+    assert!(
+        speed <= 4.0,
+        "Speed should be clamped to 4.0, got {}",
+        speed
+    );
 }
 
 #[tokio::test]
@@ -185,7 +193,7 @@ async fn test_concurrent_volume_changes() {
 
     // Should have some valid volume (no panics)
     let final_vol = player.get_volume().await;
-    assert!(final_vol >= 0.0 && final_vol <= 1.0);
+    assert!((0.0..=1.0).contains(&final_vol));
 }
 
 #[tokio::test]
@@ -231,10 +239,8 @@ async fn test_concurrent_seeks() {
     }
 
     // Wait for all to complete - should not deadlock
-    let timeout = tokio::time::timeout(
-        Duration::from_secs(5),
-        futures::future::join_all(handles)
-    ).await;
+    let timeout =
+        tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(handles)).await;
 
     assert!(timeout.is_ok(), "Concurrent seeks deadlocked");
 }
@@ -252,19 +258,23 @@ async fn test_mixed_concurrent_operations() {
             match i % 5 {
                 0 => p.set_volume(0.5).await,
                 1 => p.set_speed(1.5).await,
-                2 => { p.pause().await; },
-                3 => { p.play().await; },
-                _ => { let _ = p.seek_forward(Duration::from_secs(5)).await; },
+                2 => {
+                    p.pause().await;
+                }
+                3 => {
+                    p.play().await;
+                }
+                _ => {
+                    let _ = p.seek_forward(Duration::from_secs(5)).await;
+                }
             }
         });
         handles.push(handle);
     }
 
     // All should complete without deadlock
-    let timeout = tokio::time::timeout(
-        Duration::from_secs(5),
-        futures::future::join_all(handles)
-    ).await;
+    let timeout =
+        tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(handles)).await;
 
     assert!(timeout.is_ok(), "Mixed operations deadlocked");
 }
@@ -301,7 +311,7 @@ mod proptests {
                 let player = create_test_player();
                 player.set_volume(vol).await;
                 let actual = player.get_volume().await;
-                prop_assert!(actual >= 0.0 && actual <= 1.0,
+                prop_assert!((0.0..=1.0).contains(&actual),
                     "Volume {} should be clamped to [0.0, 1.0], got {}",
                     vol, actual);
                 Ok(())
@@ -329,7 +339,7 @@ mod proptests {
                 let player = create_test_player();
                 player.set_speed(speed).await;
                 let actual = player.get_speed().await;
-                prop_assert!(actual >= 0.1 && actual <= 4.0,
+                prop_assert!((0.1..=4.0).contains(&actual),
                     "Speed {} should be clamped to [0.1, 4.0], got {}",
                     speed, actual);
                 Ok(())
