@@ -59,7 +59,7 @@ impl DownloadManager {
 
     /// Cancel an active download
     pub async fn cancel_download(&self, episode_id: Uuid) -> Result<()> {
-        if let Some(cancel_tx) = self.cancel_signals.write().await.remove(&episode_id) {
+        match self.cancel_signals.write().await.remove(&episode_id) { Some(cancel_tx) => {
             let _ = cancel_tx.send(true);
             tracing::info!("Cancellation requested for episode: {}", episode_id);
 
@@ -67,9 +67,9 @@ impl DownloadManager {
             self.event_bus.publish(StateEvent::DownloadCancelled { episode_id });
 
             Ok(())
-        } else {
+        } _ => {
             anyhow::bail!("No active download for episode: {}", episode_id)
-        }
+        }}
     }
 
     pub async fn download_episode(&self, episode: &Episode) -> Result<PathBuf> {

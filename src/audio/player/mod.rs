@@ -452,7 +452,7 @@ fn handle_command(
             }
 
             AudioCommand::Pause => {
-                if let Some(ref s) = sink {
+                if let &mut Some(ref s) = sink {
                     s.pause();
                     state.set_paused(true);
 
@@ -465,7 +465,7 @@ fn handle_command(
             }
 
             AudioCommand::Resume => {
-                if let Some(ref s) = sink {
+                if let &mut Some(ref s) = sink {
                     s.play();
                     state.set_playing(true);
                     *playback_start_time = Some(Instant::now());
@@ -543,13 +543,13 @@ fn handle_command(
             }
 
             AudioCommand::SetSpeed(speed) => {
-                if let Some(ref s) = sink {
+                if let &mut Some(ref s) = sink {
                     s.set_speed(speed);
                 }
             }
 
             AudioCommand::SetVolume(volume) => {
-                if let Some(ref s) = sink {
+                if let &mut Some(ref s) = sink {
                     s.set_volume(volume);
                 }
             }

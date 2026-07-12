@@ -99,14 +99,14 @@ impl App {
                         tracing::info!("Episode {} completed, checking queue for next episode", completed_episode_id);
 
                         // Mark episode as played
-                        if let Err(e) = db_clone.mark_episode_played(completed_episode_id, true).await {
+                        match db_clone.mark_episode_played(completed_episode_id, true).await { Err(e) => {
                             tracing::error!("Failed to mark episode as played: {}", e);
-                        } else {
+                        } _ => {
                             // Emit episode marked played event
                             event_bus_clone.publish(StateEvent::EpisodeMarkedPlayed {
                                 episode_id: completed_episode_id
                             });
-                        }
+                        }}
 
                         // Remove from queue
                         if let Err(e) = queue_manager_clone.remove_episode(completed_episode_id).await {
@@ -601,62 +601,62 @@ impl App {
                 }
             }
             KeyCode::Char('a') => {
-                if let Err(e) = self.state.add_selected_to_queue().await {
+                match self.state.add_selected_to_queue().await { Err(e) => {
                     self.state.show_error(format!("Failed to add to queue: {}", e));
-                } else {
+                } _ => {
                     self.state.set_status("Added to queue".to_string());
                     // Auto-clear status after showing
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     self.state.clear_status();
-                }
+                }}
             }
             KeyCode::Char('d') => {
                 self.state.set_status("Starting download...".to_string());
-                if let Err(e) = self.state.download_selected_episode().await {
+                match self.state.download_selected_episode().await { Err(e) => {
                     self.state.show_error(format!("Download failed: {}", e));
-                } else {
+                } _ => {
                     self.state.set_status("Download started".to_string());
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     self.state.clear_status();
-                }
+                }}
             }
             KeyCode::Char('x') => {
-                if let Err(e) = self.state.delete_selected_download().await {
+                match self.state.delete_selected_download().await { Err(e) => {
                     self.state.show_error(format!("Failed to delete: {}", e));
-                } else {
+                } _ => {
                     self.state.set_status("Download deleted".to_string());
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     self.state.clear_status();
-                }
+                }}
             }
             KeyCode::Char('r') => {
                 self.state.set_status("Refreshing feed...".to_string());
-                if let Err(e) = self.state.refresh_selected_subscription().await {
+                match self.state.refresh_selected_subscription().await { Err(e) => {
                     self.state.show_error(format!("Refresh failed: {}", e));
-                } else {
+                } _ => {
                     self.state.set_status("Feed refreshed".to_string());
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     self.state.clear_status();
-                }
+                }}
             }
             KeyCode::Char('R') => {
                 self.state.set_status("Refreshing all feeds...".to_string());
-                if let Err(e) = self.state.refresh_all_subscriptions().await {
+                match self.state.refresh_all_subscriptions().await { Err(e) => {
                     self.state.show_error(format!("Refresh all failed: {}", e));
-                } else {
+                } _ => {
                     self.state.set_status("All feeds refreshed".to_string());
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     self.state.clear_status();
-                }
+                }}
             }
             KeyCode::Char('s') => {
-                if let Err(e) = self.state.toggle_played_status().await {
+                match self.state.toggle_played_status().await { Err(e) => {
                     self.state.show_error(format!("Failed to toggle played: {}", e));
-                } else {
+                } _ => {
                     self.state.set_status("Toggled played status".to_string());
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     self.state.clear_status();
-                }
+                }}
             }
 
             // Search
