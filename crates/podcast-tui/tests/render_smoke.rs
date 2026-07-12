@@ -4,65 +4,14 @@
 //! is the only automated guard on the rendering layer - exactly where the app's
 //! showstoppers historically lived.
 
-use std::sync::Arc;
+mod common;
 
-use chrono::Utc;
-use podcast_tui::app::events::EventBus;
-use podcast_tui::app::state::{AppState, Services, View};
-use podcast_tui::artwork::ArtworkManager;
-use podcast_tui::audio::{AudioPlayer, AudioStreamer};
-use podcast_tui::download::DownloadManager;
-use podcast_tui::feed::{FeedRefresher, PodcastSearch};
-use podcast_tui::models::{Config, Episode, Subscription};
-use podcast_tui::queue::QueueManager;
-use podcast_tui::storage::Database;
+use common::{build_state, sample_episode};
+use podcast_tui::app::state::{AppState, View};
+use podcast_tui::models::Subscription;
 use podcast_tui::ui::Ui;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use tempfile::TempDir;
-
-async fn build_state() -> (AppState, TempDir) {
-    let dir = tempfile::tempdir().unwrap();
-    let config = Config {
-        data_dir: dir.path().to_path_buf(),
-        download_dir: dir.path().join("downloads"),
-        artwork_dir: dir.path().join("artwork"),
-        ..Config::default()
-    };
-
-    let db = Arc::new(Database::new(&dir.path().join("test.db")).await.unwrap());
-    let event_bus = Arc::new(EventBus::new());
-    let services = Services {
-        audio_player: Arc::new(AudioPlayer::new(event_bus.clone()).unwrap()),
-        audio_streamer: Arc::new(AudioStreamer::new(config.stream_cache_dir())),
-        queue_manager: Arc::new(QueueManager::new(db.clone(), event_bus.clone())),
-        download_manager: Arc::new(DownloadManager::new(
-            config.download_dir.clone(),
-            3,
-            db.clone(),
-            event_bus.clone(),
-        )),
-        feed_refresher: Arc::new(FeedRefresher::new(5, db.clone(), event_bus.clone())),
-        podcast_search: Arc::new(PodcastSearch::new()),
-        artwork_manager: Arc::new(ArtworkManager::new(config.artwork_dir.clone())),
-    };
-
-    (AppState::new(config, db, services, event_bus), dir)
-}
-
-fn sample_episode(sub_id: uuid::Uuid, title: &str, played: bool, position: i64) -> Episode {
-    let mut ep = Episode::new(
-        sub_id,
-        title.to_string(),
-        format!("https://example.com/{title}.mp3"),
-        format!("guid-{title}"),
-        Utc::now(),
-    );
-    ep.played = played;
-    ep.playback_position_seconds = position;
-    ep.duration_seconds = Some(2700);
-    ep
-}
 
 fn draw(ui: &Ui, state: &mut AppState) {
     let backend = TestBackend::new(80, 24);
@@ -117,8 +66,13 @@ async fn renders_populated_lists_with_markers() {
         state.selected_index = 2;
         draw(&ui, &mut state);
     }
+}
 
-    // Search with results.
+#[tokio::test]
+async fn renders_search_view() {
+    let (mut state, _dir) = build_state().await;
+    let ui = Ui::new();
+
     state.set_view(View::Search);
     state.search_input = "test".to_string();
     draw(&ui, &mut state);

@@ -162,19 +162,26 @@ tier-1 (the gate into Phase C) first.
 - [ ] NO_COLOR (strip all fg/bg) deferred; `REVERSED` already makes the selection
       theme-independent, which was the load-bearing part.
 
-**PR 3 - queue + search operability (the Phase C surface):**
-- [ ] **Subscribe from the running app.** Search focus model (typing vs browsing
-      results); Enter on a result calls `subscribe_from_search_result`. The #1 gap.
-- [ ] **Editable, operable queue.** `select_item` Queue arm = play-this; `x` =
-      `QueueManager::remove_episode`; reorder keys optional.
-- [ ] **Define skip/advance once.** Fold `n` (`play_next_in_queue`) and the
-      completion path into a single `QueueManager` advance that marks played +
-      removes + advances, with the current item as the protected head. Today `n`
-      can replay the current episode (current-vs-head is undefined).
-- [ ] **Un-freeze refresh + search.** `refresh_*` and `search_podcasts` are still
-      `.await`ed inside the key handler, freezing the UI on every network call;
-      spawn them off-loop like `play_episode` and drive the existing
-      FeedRefresh/Download events into visible indicators.
+**PR 3 - queue + search operability (done):**
+- [x] **Subscribe from the running app.** A `SearchFocus` (Input vs Results):
+      typing runs in the box, Enter runs the query and moves focus to the results
+      list, Enter there calls `subscribe_from_search_result`; Esc steps back to
+      the box then exits. The active pane is border-highlighted. Closes the #1 gap.
+- [x] **Operable queue.** `select_item` Queue arm plays the selected item; `x` in
+      the Queue view removes it (`remove_selected_from_queue`). Reorder deferred
+      (smart-interleave is the Phase C ordering story).
+- [x] **Skip fixed.** `play_next_in_queue` now drops the current episode (the
+      queue head) before advancing, so `n` skips instead of replaying it. The
+      completion path already removed+advanced; folding both into one
+      `QueueManager` method is left for the Phase C queue rework.
+- [ ] **Un-freeze refresh + search (next, PR 4).** `refresh_*` and
+      `search_podcasts` are still `.await`ed inside the key handler, freezing the
+      UI on every network call; spawn them off-loop and drive the existing
+      FeedRefresh events into visible indicators.
+
+Tests: `queue_ops` integration tests cover the skip and remove behavior; the
+render smoke tests now also cover the search view. Shared `tests/common` builds a
+wired `AppState` over a temp DB.
 
 **Deferred / cut** (agents agreed): `Modal::Confirm` for delete (streaming-first,
 `delete_on_finish` already reclaims; ceremony for a single user); download-progress
