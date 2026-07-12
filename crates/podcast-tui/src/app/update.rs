@@ -3,13 +3,11 @@
 
 use super::App;
 use crate::app::events::StateEvent;
-use crate::app::state;
 use anyhow::Result;
 
 impl App {
     pub(crate) async fn handle_state_event(&mut self, event: StateEvent) -> Result<()> {
         use StateEvent::*;
-        use state::View;
 
         match event {
             PlaybackStarted { episode_id } => {
@@ -56,10 +54,9 @@ impl App {
                 self.state.playback_speed = speed;
             }
             QueueUpdated => {
-                // Reload queue if we're on the queue view
-                if self.state.current_view == View::Queue {
-                    let _ = self.state.load_queue().await;
-                }
+                // Reload regardless of view: the footer shows "Up Next: N" from
+                // everywhere, so the cached queue must stay current.
+                let _ = self.state.load_queue().await;
             }
             DownloadProgress {
                 episode_id,

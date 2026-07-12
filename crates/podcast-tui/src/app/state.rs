@@ -9,6 +9,7 @@ use crate::queue::QueueManager;
 use crate::storage::Database;
 use crate::storage::db::PlaybackState;
 use anyhow::Result;
+use ratatui::widgets::ListState;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -99,7 +100,9 @@ pub struct AppState {
     // UI state
     pub current_view: View,
     pub selected_index: usize,
-    pub scroll_offset: usize,
+    /// Scroll/selection state for the current list view. Reused across frames so
+    /// ratatui keeps the selected row on screen; reset when the view changes.
+    pub list_state: ListState,
     pub modal: Modal,
     pub search_input: String,
     pub search_cursor: usize,
@@ -186,7 +189,7 @@ impl AppState {
             event_bus,
             current_view: View::Subscriptions,
             selected_index: 0,
-            scroll_offset: 0,
+            list_state: ListState::default(),
             modal: Modal::None,
             search_input: String::new(),
             search_cursor: 0,
@@ -246,10 +249,13 @@ impl AppState {
     pub fn set_view(&mut self, view: View) {
         self.current_view = view;
         self.selected_index = 0;
+        // New view, new list: clear the scroll offset and selection so the next
+        // render starts at the top rather than inheriting the old view's scroll.
+        self.list_state = ListState::default();
     }
 
     /// Number of items in the current view's list (0 for non-list views).
-    fn current_list_len(&self) -> usize {
+    pub fn current_list_len(&self) -> usize {
         match self.current_view {
             View::Subscriptions => self.subscriptions.len(),
             View::Episodes => self.episodes.len(),
@@ -257,6 +263,19 @@ impl AppState {
             View::Search => self.search_results.len(),
             View::Settings => 0,
         }
+    }
+
+    /// Point `list_state` at the current selection (clamped to the list), so a
+    /// stateful list render highlights the right row and scrolls to keep it
+    /// visible. Called by the UI each frame before rendering a list.
+    pub fn sync_list_selection(&mut self) {
+        let len = self.current_list_len();
+        let selected = if len == 0 {
+            None
+        } else {
+            Some(self.selected_index.min(len - 1))
+        };
+        self.list_state.select(selected);
     }
 
     /// Highest selectable index in the current view (0 when empty).
