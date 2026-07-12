@@ -22,3 +22,6 @@ Thumbs.db
 
 # Local data
 /data/
+
+# Personal dogfood data (real podcast subscriptions - do not commit)
+/podcasts.opml

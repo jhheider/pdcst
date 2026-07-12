@@ -15,6 +15,14 @@ struct Cli {
     /// Enable debug logging
     #[arg(short, long)]
     debug: bool,
+
+    /// Import subscriptions from an OPML file, then exit (skips duplicates)
+    #[arg(long, value_name = "FILE")]
+    import: Option<std::path::PathBuf>,
+
+    /// Export subscriptions to an OPML file, then exit
+    #[arg(long, value_name = "FILE")]
+    export: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
@@ -31,6 +39,24 @@ async fn main() -> Result<()> {
     // Setup logging
     logging::setup_logging(&config.log_dir, cli.debug)?;
     tracing::info!("Starting podcast-tui v{}", env!("CARGO_PKG_VERSION"));
+
+    // Batch OPML operations run headlessly and exit, so the TUI never starts.
+    if let Some(path) = cli.import.as_ref() {
+        let mut app = App::new(config).await?;
+        let imported = app.import_opml(path).await?;
+        println!(
+            "Imported {imported} subscription(s) from {}",
+            path.display()
+        );
+        println!("Run `podcast-tui` to browse them.");
+        return Ok(());
+    }
+    if let Some(path) = cli.export.as_ref() {
+        let app = App::new(config).await?;
+        app.export_opml(path).await?;
+        println!("Exported subscriptions to {}", path.display());
+        return Ok(());
+    }
 
     // Create and run application
     let mut app = App::new(config).await?;
