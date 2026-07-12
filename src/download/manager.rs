@@ -281,13 +281,7 @@ impl DownloadManager {
             .url
             .rsplit('.')
             .next()
-            .and_then(|ext| {
-                if ext.len() <= 4 && ext.chars().all(|c| c.is_alphanumeric()) {
-                    Some(ext)
-                } else {
-                    None
-                }
-            })
+            .filter(|&ext| ext.len() <= 4 && ext.chars().all(|c| c.is_alphanumeric()))
             .unwrap_or("mp3");
 
         format!("{}.{}", safe_title, extension)
