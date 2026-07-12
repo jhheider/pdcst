@@ -1,78 +1,67 @@
-[package]
-name = "podcast-tui"
-version = "1.0.0"
+# pdcst workspace: the podcast-tui binary and the wsola time-stretch library as
+# sibling crates. Metadata and dependency versions are hoisted here so the two
+# crates share one source of truth, but each crate versions independently (no
+# workspace.package.version) - wsola will publish on its own cadence.
+[workspace]
+resolver = "3"
+members = ["crates/podcast-tui", "crates/wsola"]
+
+[workspace.package]
 edition = "2024"
-authors = ["Podcast TUI Contributors"]
-description = "A fast, keyboard-driven terminal podcast player"
 license = "MIT"
+authors = ["Jacob Heider"]
+repository = "https://github.com/jhheider/pdcst"
 
-[dependencies]
+[workspace.dependencies]
+# Internal
+wsola = { path = "crates/wsola", version = "0.1" }
+
 # TUI
-ratatui = "0.29"
-crossterm = "0.28"
-ratatui-image = "2.0"
+ratatui = "0.30"
+crossterm = "0.29"
 
-# Image processing
-image = "0.25"
-
-# Async runtime
+# Async
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["codec"] }
 
 # Audio
 rodio = "0.19"
 
-# HTTP/Networking. rustls + ring only: no native-tls/openssl, no aws-lc. Pull no
-# default TLS, take rustls with no baked-in provider, and install the ring
-# provider once at startup (see main.rs). charset for .text() decoding; http2
-# for multiplexed feed fetches.
-reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "charset", "http2", "rustls-tls-webpki-roots-no-provider"] }
+# HTTP/TLS: rustls + ring only (no native-tls/openssl, no aws-lc). No default
+# TLS, rustls with no baked-in provider, ring installed at startup (see main.rs).
+reqwest = { version = "0.13", default-features = false, features = ["stream", "json", "query", "charset", "http2", "rustls-no-provider", "webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-tokio-util = { version = "0.7", features = ["codec"] }
 
 # RSS/XML
-rss = "2.0"
-quick-xml = "0.36"
+rss = "2.1"
+quick-xml = "0.41"
 opml = "1.1"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid", "migrate"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
+toml = "1.1"
 
-# Time
+# Misc
 chrono = { version = "0.4", features = ["serde"] }
-
-# UUID
 uuid = { version = "1.11", features = ["v4", "serde"] }
-
-# Error handling
 anyhow = "1.0"
 thiserror = "2.0"
-
-# Utilities
-dirs = "5.0"
+dirs = "6.0"
 url = "2.5"
 bytes = "1.9"
 futures = "0.3"
 urlencoding = "2.1"
-
-# CLI
 clap = { version = "4", features = ["derive"] }
-
-# Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 
-[dev-dependencies]
+# Dev
 tempfile = "3.0"
 mockito = "1.0"
 proptest = "1.0"
-
-[[bin]]
-name = "podcast-tui"
-path = "src/main.rs"
