@@ -1,5 +1,3 @@
-pub mod components;
-
 use crate::app::{AppState, state::Modal, state::SearchFocus, state::View};
 use crate::models::Episode;
 use crate::utils::time::format_duration;
