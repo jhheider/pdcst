@@ -83,6 +83,11 @@ impl App {
         let download_manager_finish = download_manager.clone();
         let delete_on_finish = config.delete_on_finish;
 
+        // Clones + setting for the background refresh scheduler.
+        let refresh_scheduler_feed = feed_refresher.clone();
+        let refresh_scheduler_db = db.clone();
+        let auto_refresh_interval = config.auto_refresh_interval_minutes;
+
         // Clones + settings for the retention manager (config is moved below).
         let retention = Arc::new(RetentionManager::new(
             db.clone(),
@@ -133,6 +138,14 @@ impl App {
             });
         }
         retention.spawn_periodic();
+
+        // Background refresh: refresh all feeds at launch and on the configured
+        // interval, feeding new episodes into the auto-queue.
+        crate::feed::spawn_auto_refresh(
+            refresh_scheduler_feed,
+            refresh_scheduler_db,
+            auto_refresh_interval,
+        );
 
         tracing::info!("Application initialized successfully");
 

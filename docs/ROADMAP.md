@@ -238,13 +238,21 @@ refresh, watch Up Next fill) is Jacob's to run.
 - Depends on: a working editable queue (Phase B, done), resume/listen-state
   (Phase A, done), and refresh (Phase D) as the trigger source.
 
-### Phase D - refresh scheduling
+### Phase D - refresh scheduling (done)
 
-The auto-queue is only as good as its trigger. Add background feed refresh:
-on-launch refresh, then periodic (programmable interval), concurrency-bounded
-(`FeedRefresher` already does semaphore-bounded concurrent refresh). New episodes
-found here are what feed Phase C. Surface refresh state in the UI (Phase B's
-feedback work).
+The auto-queue's trigger. `feed::spawn_auto_refresh` (in `feed/scheduler.rs`,
+wired in `App::new`) refreshes every feed once ~3s after launch and then every
+`config.auto_refresh_interval_minutes` (default 60; `0` disables the periodic
+pass, launch refresh still runs). It reuses the semaphore-bounded
+`FeedRefresher::refresh_all`, so it publishes the same `FeedRefresh*` events (UI
+progress) and runs the Phase C auto-enqueue hook - so new episodes now land in
+Up Next on their own, no manual `R`. The Settings view shows the interval.
+
+- [x] on-launch + periodic background refresh, concurrency-bounded.
+- [x] feeds Phase C (auto-enqueue runs inside `refresh_feed`).
+- [x] refresh state surfaced (FeedRefresh events -> status; interval in Settings).
+- Note: a manual `R` racing the auto-refresh on the same feed is a narrow,
+  accepted race (both dedup by guid; worst case a transient double-enqueue).
 
 ### Phase E - distribution and static linking
 

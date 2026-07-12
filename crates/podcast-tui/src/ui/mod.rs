@@ -430,6 +430,13 @@ impl Ui {
                 ),
                 Style::default().fg(Color::White),
             )),
+            Line::from(Span::styled(
+                match state.config.auto_refresh_interval_minutes {
+                    0 => "Auto-refresh: off (manual only)".to_string(),
+                    n => format!("Auto-refresh: every {n} min"),
+                },
+                Style::default().fg(Color::White),
+            )),
             Line::from(""),
             Line::from(Span::styled(
                 "Auto-queue:",
