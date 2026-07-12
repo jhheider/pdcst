@@ -38,7 +38,16 @@ pub async fn build_state() -> (AppState, TempDir) {
             db.clone(),
             event_bus.clone(),
         )),
-        feed_refresher: Arc::new(FeedRefresher::new(5, db.clone(), event_bus.clone())),
+        feed_refresher: Arc::new(FeedRefresher::new(
+            5,
+            db.clone(),
+            event_bus.clone(),
+            Arc::new(QueueManager::new(db.clone(), event_bus.clone())),
+            podcast_tui::feed::AutoQueuePolicy {
+                max_depth: 20,
+                interleave: true,
+            },
+        )),
         podcast_search: Arc::new(PodcastSearch::new()),
         artwork_manager: Arc::new(ArtworkManager::new(config.artwork_dir.clone())),
     };
