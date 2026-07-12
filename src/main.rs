@@ -27,6 +27,9 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install ring as the rustls provider before any TLS client is built.
+    podcast_tui::ensure_crypto_provider();
+
     let cli = Cli::parse();
 
     // Load configuration

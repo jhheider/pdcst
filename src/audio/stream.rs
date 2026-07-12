@@ -53,6 +53,7 @@ pub struct AudioStreamer {
 
 impl AudioStreamer {
     pub fn new() -> Self {
+        crate::ensure_crypto_provider();
         let client = Client::builder()
             .user_agent("podcast-tui/1.0")
             .timeout(std::time::Duration::from_secs(300)) // 5 minute timeout for large files

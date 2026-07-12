@@ -51,7 +51,10 @@ pub struct PodcastSearch {
 impl PodcastSearch {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: {
+                crate::ensure_crypto_provider();
+                reqwest::Client::new()
+            },
         }
     }
 

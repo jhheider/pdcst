@@ -25,6 +25,7 @@ pub struct DownloadManager {
 
 impl DownloadManager {
     pub fn new(download_dir: PathBuf, max_concurrent: usize, db: Arc<Database>, event_bus: Arc<EventBus>) -> Self {
+        crate::ensure_crypto_provider();
         let client = Client::builder()
             .user_agent("podcast-tui/1.0")
             .timeout(std::time::Duration::from_secs(600)) // 10 minute timeout
