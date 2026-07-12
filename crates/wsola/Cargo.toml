@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["audio", "dsp", "time-stretch", "wsola", "pitch"]
+categories = ["multimedia::audio"]
+# Verified with `cargo msrv verify`. 1.87 for `u*::is_multiple_of` (above the
+# edition-2024 floor of 1.85).
+rust-version = "1.87"
 
 [dependencies]
 thiserror.workspace = true
