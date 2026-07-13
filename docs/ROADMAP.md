@@ -67,18 +67,14 @@ loop closes, but flagged **two real gaps plus a subtraction PR** before the
 roadmap is honestly "done, maintenance-only." None is scope creep; each serves
 the single-user daily-driver thesis. Ordered by leverage:
 
-1. **[ ] Fix false-completion on a mid-stream network drop (reliability - do
-   first).** When `GrowingFile` errors mid-download (`audio/stream.rs:239-240`)
-   the rodio `Source` stops yielding and the player's completion check fires
-   purely on `p.empty()` (`audio/player/mod.rs:344-348`), publishing
-   `PlaybackCompleted`. That makes `auto_advance.rs` mark the episode **played**,
-   delete-on-finish its download, and skip ahead - so a cellular blip at minute 5
-   of a 60-minute episode silently marks it done and discards your position. For
-   a tool whose origin story is the commute, this is core, not edge. The failure
-   signal already exists (the `failed` atomic in `stream.rs`); thread it through
-   so the empty-check emits `PlaybackError` (keep position, don't mark played)
-   instead of `PlaybackCompleted`. (Downgrades the Stage 3b "caveat" below, which
-   undersold it.)
+1. **[x] Fix false-completion on a mid-stream network drop (reliability).**
+   DONE. `GrowingFile::failure()` hands the audio thread a `StreamFailure` handle
+   (a cheap clone of the stream's `failed` flag) that outlives the reader once the
+   decoder consumes it; the run-dry check (`audio/player/mod.rs`) now routes
+   through `run_dry_event`, emitting `PlaybackError` (position kept, episode not
+   marked played, `auto_advance` ignores it) instead of `PlaybackCompleted` when
+   the download failed mid-stream. So a cellular blip mid-episode no longer marks
+   it done and skips ahead. Unit-tested (`run_dry_event`, `failure_handle_*`).
 2. **[ ] Make config reachable at a default path.** `Config::load_default`
    (`config.rs:7`) never reads a file - it always returns `Config::default()`,
    and `save_to_file` is called nowhere. So the dials that tune *the auto-queue
@@ -141,8 +137,9 @@ it is foundational.
       `play_stream`; both share one generic `start_playback<R: Read + Seek>`. Temp
       files live under `config.stream_cache_dir()` and are purged as episodes
       change. Caveat (Jacob's ears): a resume seek into a not-yet-downloaded
-      region waits for the download to reach it, and a mid-stream download failure
-      currently ends the episode like a normal completion.
+      region waits for the download to reach it. (A mid-stream download failure
+      used to end the episode like a normal completion; fixed - see "What's left"
+      item 1, it now surfaces as a `PlaybackError` with the position kept.)
 - [x] **Stage 4 - resume.** Done. `AppState::save_progress` persists the
       per-episode position AND the singleton `playback_state` (episode, rate,
       volume) on the 1s `PlaybackPosition` tick, on pause, and on quit.

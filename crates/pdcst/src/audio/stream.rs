@@ -256,6 +256,30 @@ impl Read for GrowingFile {
     }
 }
 
+impl GrowingFile {
+    /// A cheap, cloneable handle to this stream's failure flag. The audio thread
+    /// keeps one after the reader is moved into the decoder, so when the source
+    /// runs dry it can tell a real end-of-episode from a mid-stream download
+    /// failure (which must not be treated as "finished").
+    pub fn failure(&self) -> StreamFailure {
+        StreamFailure(self.shared.clone())
+    }
+}
+
+/// A handle to a stream's failure flag, outliving the [`GrowingFile`] reader it
+/// came from (which the decoder consumes). See [`GrowingFile::failure`].
+#[derive(Clone)]
+pub struct StreamFailure(Arc<StreamShared>);
+
+impl StreamFailure {
+    /// True once the background download has errored (partial file, dead
+    /// connection). A source running dry with this set truncated early rather
+    /// than finishing.
+    pub fn failed(&self) -> bool {
+        self.0.failed.load(Ordering::Acquire)
+    }
+}
+
 impl Seek for GrowingFile {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let new_pos = match pos {
@@ -432,6 +456,25 @@ mod tests {
         shared.notify();
         let err = reader.read(&mut [0u8; 8]).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    /// A `StreamFailure` handle tracks the shared flag and outlives the reader.
+    #[test]
+    fn failure_handle_reflects_failed_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stream-fh.audio");
+        std::fs::write(&path, b"x").unwrap();
+        let shared = Arc::new(StreamShared::new());
+        let reader = GrowingFile {
+            file: StdFile::open(&path).unwrap(),
+            pos: 0,
+            shared: shared.clone(),
+        };
+        let failure = reader.failure();
+        drop(reader); // the decoder would consume the reader; the handle survives.
+        assert!(!failure.failed(), "not failed while downloading");
+        shared.failed.store(true, Ordering::Release);
+        assert!(failure.failed(), "reflects a download failure");
     }
 
     #[test]

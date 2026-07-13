@@ -45,6 +45,10 @@ impl App {
             }
             PlaybackError { error } => {
                 tracing::error!("Playback error: {}", error);
+                // A failure ends playback (e.g. a mid-stream download drop); clear
+                // the playing indicator. The saved position is untouched, and the
+                // episode is not marked played, so it resumes where it left off.
+                self.state.is_playing = false;
                 self.state.show_error(format!("Playback error: {}", error));
             }
             VolumeChanged { volume } => {
