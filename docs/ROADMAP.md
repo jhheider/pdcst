@@ -31,42 +31,83 @@ discovery, and a settings-heavy UI are explicitly NOT the point (sync is
 impossible in a local app anyway). The edge is: mine, fast, self-contained,
 does not crash, and keeps my queue full.
 
-## Where we are now (2026-07-12)
+## Where we are now (2026-07-13)
 
-Backend is genuinely solid and tested; the UI is wired but has real gaps; the
-auto-queue does not exist yet (only a basic advance-on-complete). A three-lens
-audit (code / product / TUI-UX) is summarized at the bottom.
+Feature-complete and shipped. Every phase below (A-E) is done; the repo is
+public, on hosted CI, releasing tagged binaries + a Homebrew tap. Latest release
+**v0.3.2**. The historical phase log is kept below for a cold start; this is the
+current-state summary.
 
-**Merged to `main`:**
-- **Workspace**: `crates/pdcst` (binary) + `crates/wsola` (library),
-  independently versioned, deps + metadata hoisted to `[workspace.*]`.
-- **`wsola`**: a real, documented, thiserror, property-tested pure-Rust WSOLA
-  time-stretch library (pitch-preserved tempo). Its own crate; will publish
-  independently. Brief: jhheider/briefs `pure-rust-time-stretch`.
-- **Deps maximized**: ratatui 0.30, crossterm 0.29, reqwest 0.13, sqlx 0.9,
-  quick-xml 0.41, toml 1.1, dirs 6, rodio 0.22. Dropped unused `image` +
-  `ratatui-image`. TLS is rustls + **ring** only (no openssl/native-tls/aws-lc).
-- **Reachable onboarding**: `--import` / `--export` OPML CLI flags (the app
-  previously had no way to add a podcast). Verified against a real 17-feed
-  Pocket Casts OPML.
-- **CI**: thin `jhheider/rust-ci@v1` callers (ci/style/audit) on the self-hosted
-  `studio-pdcst` runner (private repo). The runner image carries `libasound2-dev`
-  + `pkg-config` for rodio; see `jhheider/gha-runner` `images/pdcst`. Toolchain
-  is rustc 1.97.
+- **The core loop closes end to end**, validated in real daily use: subscribe
+  (in-app iTunes search or `--import` OPML) -> hands-off background refresh
+  (`feed/scheduler.rs`) -> auto-managed Up Next -> play with pitch-corrected
+  speed, seek, and cross-session resume (survives quit *and* SIGTERM/SIGHUP).
+- **The deal (auto-queue) is built and tested** (Phase C): auto-fill at publish
+  time, per-sub push/unshift, programmable max depth, smart interleave,
+  never-clobber-current, listen-state tracking.
+- **`wsola`** is its own crate, **published to crates.io** (0.1.0), consumed by
+  pdcst via a rodio `Source`; re-confirmed perfect in real playback (1.5x, no
+  chipmunk). Brief: jhheider/briefs `pure-rust-time-stretch`.
+- **Polish + reliability passes** (v0.3.0-v0.3.2): two-pane ranger-style Library,
+  episode cards, subscription counts, honest per-feed errors + Atom fallback +
+  feed recovery (`f`), abrupt-exit save, and **feed-text normalization** (HTML
+  entities + ZWJ emoji stripped at ingest, v0.3.2 - brief
+  `pdcst-emoji-ghost-glyphs`).
+- **Distribution** (Phase E): public repo, hosted CI (fmt + clippy `-D warnings`
+  + tests + the no-em-dash style gate), and a `jhheider/rust-ci` `release.yml`
+  caller that on `release: published` builds `x86_64-unknown-linux-gnu` +
+  `aarch64`/`x86_64-apple-darwin` binaries, publishes `wsola` (skipping
+  already-published versions; pdcst itself stays unpublished), and refreshes
+  `Formula/pdcst.rb` in `jhheider/homebrew-tap`.
 
-**Open PR (`audio/async-rewrite`, PR #4):**
-- **Stage 1 - rodio 0.22 migration**: `DeviceSinkBuilder`/`MixerDeviceSink` +
-  `Player`; real `Player::try_seek` (deleted the O(n) re-decode seek and the
-  buffer it needed); position from the player. rodio was the last held dep.
-- **Stage 2 - pitch-corrected speed**: `WsolaSource<S>` - a generic rodio
-  `Source` that time-stretches its inner source, reads tempo lock-free from a
-  shared `AtomicU32` (live speed changes), tracks position in **source time**
-  (not stretched output time) in a shared `AtomicU64`, and resets on seek. Speed
-  now flows through wsola, not rodio's pitch-shifting `set_speed`.
+## What's left (product review 2026-07-13)
 
-**NOT yet done:** the whole UX layer (Phase B) and the auto-queue (Phase C).
-De-freeze and resume (Phase A Stages 3-4) are now done; the last Phase A item is
-Jacob's real-audio validation.
+A product-designer pass over the shipped app confirmed the thesis is met and the
+loop closes, but flagged **two real gaps plus a subtraction PR** before the
+roadmap is honestly "done, maintenance-only." None is scope creep; each serves
+the single-user daily-driver thesis. Ordered by leverage:
+
+1. **[ ] Fix false-completion on a mid-stream network drop (reliability - do
+   first).** When `GrowingFile` errors mid-download (`audio/stream.rs:239-240`)
+   the rodio `Source` stops yielding and the player's completion check fires
+   purely on `p.empty()` (`audio/player/mod.rs:344-348`), publishing
+   `PlaybackCompleted`. That makes `auto_advance.rs` mark the episode **played**,
+   delete-on-finish its download, and skip ahead - so a cellular blip at minute 5
+   of a 60-minute episode silently marks it done and discards your position. For
+   a tool whose origin story is the commute, this is core, not edge. The failure
+   signal already exists (the `failed` atomic in `stream.rs`); thread it through
+   so the empty-check emits `PlaybackError` (keep position, don't mark played)
+   instead of `PlaybackCompleted`. (Downgrades the Stage 3b "caveat" below, which
+   undersold it.)
+2. **[ ] Make config reachable at a default path.** `Config::load_default`
+   (`config.rs:7`) never reads a file - it always returns `Config::default()`,
+   and `save_to_file` is called nowhere. So the dials that tune *the auto-queue
+   itself* (`queue_max_depth`, `auto_queue_to_top_default`, `smart_interleave`,
+   `auto_refresh_interval_minutes`, retention caps) can only be changed by
+   hand-authoring a TOML and passing `--config <file>` every launch; the Settings
+   view shows them read-only. Fix: write a commented default TOML on first run
+   (and/or `--print-config`) and have `load_default` read it. Keep it a plain
+   file - **no in-app editor** (that re-imports the settings-heavy UI that was
+   correctly cut).
+3. **[ ] Subtraction PR (no behavior change).** The existing Phase B "delete dead
+   subsystems" item, expanded by the review:
+   - The whole **`artwork/` subsystem (~518 lines)** is live-wired but
+     dead-ended: `ArtworkManager` is built, `load_cache_from_disk()` runs at
+     startup (`app/mod.rs:76`), `library.rs:134` populates `artwork_url` - yet
+     the renderer is the deliberately-cut stub, so it does real startup I/O for a
+     feature that renders nothing. Cut it wholesale.
+   - **Dead/misleading config knobs**: `keybindings`, `theme.colors`,
+     `show_artwork`, `artwork_protocol`, `artwork_dir`, `trim_silence` are never
+     read; worse, `skip_forward_seconds`/`skip_backward_seconds` are unused *and
+     inverted* vs the hardcoded 10s/30s bindings, so setting them is a silent
+     no-op. Delete them from `Config`.
+   - Plus the originally-listed 30-variant `PodcastError` (app uses `anyhow`),
+     the second `AppEvent`/`from_key_event` keymap, and `ui/components/*`.
+
+**Verdict:** one or two real gaps (items 1-2), then the subtraction PR (item 3),
+after which the roadmap is genuinely done for its purpose. Explicitly still cut:
+config-editing UI, artwork rendering, manual queue reorder, download-progress UI,
+sync, discovery, themes.
 
 ## Phases
 
@@ -321,9 +362,9 @@ Remaining for a public release (Jacob's calls, not built):
 - Config discoverability: `Config` only loads from `--config <file>`; add
   `--print-config` or write a commented default on first run.
 - **Public-vs-personal: decided - personal.** Ships as a personal tool others
-  can build ("runs well for me, PRs welcome, no support"). The `wsola` crate,
-  however, will likely be released independently on crates.io (it is generally
-  useful and standalone).
+  can build ("runs well for me, PRs welcome, no support"). The `wsola` crate is
+  **published independently on crates.io** (0.1.0; generally useful and
+  standalone).
 
 Cosmetic papercuts (deferred): emoji in headers (cross-terminal width),
 per-view footer hints, search-box arrow keys seek instead of editing.
@@ -429,10 +470,14 @@ layer thin. Brief: jhheider/briefs `pdcst-polish-pass`. All six findings fixed
 - ~~Progressive streaming vs download-then-play.~~ RESOLVED 2026-07-12:
   progressive stream-to-disk (play after a 256 KiB prebuffer while the rest
   downloads). See Phase A Stage 3b.
-- Auto-add default: push or unshift? Per-sub UI shape.
-- Smart-interleave algorithm: insert-at-nearest-legal vs periodic re-balance.
+- ~~Auto-add default: push or unshift? Per-sub UI shape.~~ RESOLVED (Phase C
+  PR3): per-sub `A` cycles off -> bottom -> top, defaulting off; global
+  `auto_queue_to_top_default` in `Config`.
+- ~~Smart-interleave algorithm: insert-at-nearest-legal vs periodic re-balance.~~
+  RESOLVED (Phase C PR2): insert-at-nearest-legal via the pure
+  `nearest_legal_position`.
 - Whether to pursue a musl fully-static Linux build now or after the product is
-  proven.
+  proven. (Still open; Phase E ships glibc + dynamic libasound, which is fine.)
 
 ## The audit (three-lens), for reference
 
