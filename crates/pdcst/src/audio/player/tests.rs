@@ -7,6 +7,23 @@ fn create_test_player() -> AudioPlayer {
     AudioPlayer::new(event_bus).unwrap()
 }
 
+#[test]
+fn run_dry_event_distinguishes_failure_from_completion() {
+    let id = Uuid::new_v4();
+
+    // Natural end -> completion (auto-advance marks played + advances).
+    match run_dry_event(id, false) {
+        StateEvent::PlaybackCompleted { episode_id } => assert_eq!(episode_id, id),
+        other => panic!("expected PlaybackCompleted, got {other:?}"),
+    }
+
+    // Mid-stream download failure -> error (position kept, not marked played).
+    match run_dry_event(id, true) {
+        StateEvent::PlaybackError { .. } => {}
+        other => panic!("expected PlaybackError, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn test_audio_player_is_send_sync() {
     // This test verifies AudioPlayer can be moved across thread boundaries

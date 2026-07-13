@@ -11,7 +11,7 @@
 //!
 //! Acquire `operation_lock` before any `state` lock; never the reverse.
 
-use super::stream::GrowingFile;
+use super::stream::{GrowingFile, StreamFailure};
 use super::wsola_source::WsolaSource;
 use crate::app::events::{EventBus, StateEvent};
 use anyhow::{Context, Result};
@@ -316,6 +316,10 @@ fn audio_thread(
 
     let mut player: Option<Player> = None;
     let mut current_episode: Option<Uuid> = None;
+    // Kept alongside the player so a source running dry can be told apart from a
+    // mid-stream download failure (which must not count as "finished"). `None`
+    // for a fully-downloaded file, which cannot fail this way.
+    let mut current_failure: Option<StreamFailure> = None;
     let mut last_position_event = Instant::now();
 
     loop {
@@ -325,7 +329,14 @@ fn audio_thread(
                 if let AudioCommand::Play { episode_id, .. } = &cmd {
                     current_episode = Some(*episode_id);
                 }
-                handle_command(cmd, &mut player, device.as_ref(), &state, &event_bus);
+                handle_command(
+                    cmd,
+                    &mut player,
+                    &mut current_failure,
+                    device.as_ref(),
+                    &state,
+                    &event_bus,
+                );
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if let Some(p) = &player {
@@ -344,8 +355,12 @@ fn audio_thread(
                     if p.empty() && state.is_playing.load(Ordering::Relaxed) {
                         state.set_playing(false);
                         state.set_paused(false);
+                        // A mid-stream download failure makes the source run dry
+                        // early; that is an error (keep position, do not mark
+                        // played), not a completion.
+                        let failed = current_failure.take().is_some_and(|f| f.failed());
                         if let Some(episode_id) = current_episode.take() {
-                            event_bus.publish(StateEvent::PlaybackCompleted { episode_id });
+                            event_bus.publish(run_dry_event(episode_id, failed));
                         }
                     }
                 }
@@ -360,6 +375,7 @@ fn audio_thread(
 fn handle_command(
     cmd: AudioCommand,
     player: &mut Option<Player>,
+    current_failure: &mut Option<StreamFailure>,
     device: Option<&MixerDeviceSink>,
     state: &Arc<AudioState>,
     event_bus: &Arc<EventBus>,
@@ -374,6 +390,9 @@ fn handle_command(
             if let Some(p) = player.take() {
                 p.stop();
             }
+            // A new play supersedes any prior stream's failure handle; set it from
+            // this source (a stream can fail mid-download; a local file cannot).
+            *current_failure = None;
             if let Some(device) = device {
                 // Each source is a distinct `Read + Seek` concrete type, so open
                 // it and hand it to the generic `start_playback`.
@@ -388,6 +407,7 @@ fn handle_command(
                         }
                     },
                     PlaySource::Stream(reader) => {
+                        *current_failure = Some(reader.failure());
                         start_playback(reader, device, player, state, event_bus, start)
                     }
                 }
@@ -415,6 +435,7 @@ fn handle_command(
             if let Some(p) = player.take() {
                 p.stop();
             }
+            *current_failure = None;
             state.set_playing(false);
             state.set_paused(false);
             state.set_position(Duration::ZERO);
@@ -442,7 +463,22 @@ fn handle_command(
             if let Some(p) = player.take() {
                 p.stop();
             }
+            *current_failure = None;
         }
+    }
+}
+
+/// The terminal event when a source runs dry: a mid-stream download failure is a
+/// `PlaybackError` (the app keeps the saved position and does not mark the
+/// episode played), anything else is a natural `PlaybackCompleted`.
+fn run_dry_event(episode_id: Uuid, failed: bool) -> StateEvent {
+    if failed {
+        tracing::warn!("episode {episode_id} stream failed mid-playback; not marking played");
+        StateEvent::PlaybackError {
+            error: "episode download failed mid-stream; your position was kept".to_string(),
+        }
+    } else {
+        StateEvent::PlaybackCompleted { episode_id }
     }
 }
 
