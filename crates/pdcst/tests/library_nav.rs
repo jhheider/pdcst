@@ -124,7 +124,7 @@ async fn subscription_row_has_counts() {
     state.load_subscriptions().await.unwrap();
     let row = &state.subscriptions[0];
     assert_eq!(row.episode_count, 3);
-    assert_eq!(row.unplayed_count, 2);
+    assert_eq!(row.new_count, 2);
     assert!(row.latest_episode_at.is_some());
 
     // A feed with no episodes reports zeros, not NULLs.
@@ -137,7 +137,7 @@ async fn subscription_row_has_counts() {
         .find(|s| s.title == "Empty")
         .unwrap();
     assert_eq!(empty_row.episode_count, 0);
-    assert_eq!(empty_row.unplayed_count, 0);
+    assert_eq!(empty_row.new_count, 0);
     assert!(empty_row.latest_episode_at.is_none());
 }
 

@@ -68,7 +68,7 @@ pub struct Subscription {
     #[serde(skip)]
     pub episode_count: i64,
     #[serde(skip)]
-    pub unplayed_count: i64,
+    pub new_count: i64,
     #[serde(skip)]
     pub latest_episode_at: Option<DateTime<Utc>>,
 }
@@ -94,7 +94,7 @@ impl Subscription {
             created_at: now,
             last_error: None,
             episode_count: 0,
-            unplayed_count: 0,
+            new_count: 0,
             latest_episode_at: None,
         }
     }

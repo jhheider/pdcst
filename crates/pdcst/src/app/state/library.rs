@@ -457,6 +457,38 @@ impl AppState {
         Ok(false)
     }
 
+    /// `S`: mark seen (acknowledge without listening). In the Episodes pane it
+    /// clears the selected episode's "new" flag; in the Subscriptions pane it
+    /// marks the whole selected feed seen - the backlog clear for a freshly
+    /// imported feed whose episodes all arrived "new". Returns whether it acted.
+    pub async fn mark_seen(&mut self) -> Result<bool> {
+        match self.current_view {
+            View::Episodes => {
+                if let Some(episode) = self.episodes.get(self.episode_index) {
+                    let id = episode.id;
+                    self.db.mark_episode_seen(id).await?;
+                    if let Some(sub) = self.current_subscription.clone() {
+                        self.load_episodes_for_subscription(sub.id).await?;
+                    }
+                    self.load_subscriptions().await?;
+                    self.set_status("Marked seen".to_string());
+                    return Ok(true);
+                }
+            }
+            View::Subscriptions => {
+                if let Some(sub) = self.subscriptions.get(self.subscription_index).cloned() {
+                    let n = self.db.mark_subscription_seen(sub.id).await?;
+                    self.load_subscriptions().await?;
+                    self.load_episodes_for_subscription(sub.id).await?;
+                    self.set_status(format!("{}: marked {} seen", sub.title, n));
+                    return Ok(true);
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
     // Queue management
 
     pub async fn load_queue(&mut self) -> Result<()> {

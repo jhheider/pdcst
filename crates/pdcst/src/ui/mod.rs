@@ -305,14 +305,14 @@ impl Ui {
                         Style::default().fg(Color::Red),
                     ))
                 } else {
-                    let new_style = if sub.unplayed_count > 0 {
+                    let new_style = if sub.new_count > 0 {
                         Style::default().fg(Color::Green)
                     } else {
                         dim
                     };
                     let mut spans = vec![
                         Span::raw("   "),
-                        Span::styled(format!("{} new", sub.unplayed_count), new_style),
+                        Span::styled(format!("{} new", sub.new_count), new_style),
                         Span::styled(" | ", dim),
                         Span::styled(format!("{} eps", sub.episode_count), dim),
                     ];
@@ -872,9 +872,11 @@ impl Ui {
         // opening Help. A common tail carries the always-available keys.
         let view_hint = match state.current_view {
             View::Subscriptions => {
-                "[l/Enter] Episodes  [A] Auto-queue  [r] Refresh  [f] Fix feed  [u] Unsub"
+                "[l/Enter] Episodes  [A] Auto-queue  [S] Seen all  [r] Refresh  [f] Fix  [u] Unsub"
             }
-            View::Episodes => "[Enter] Play  [h/Esc] Back  [a] Queue  [d] Download  [s] Played",
+            View::Episodes => {
+                "[Enter] Play  [h/Esc] Back  [a] Queue  [d] Download  [s] Played  [S] Seen"
+            }
             View::Queue => "[Enter] Play  [x] Remove  [n] Skip",
             View::Search if state.feed_fix_target.is_some() => {
                 "type to search  [Enter] Re-point feed  [Esc] Cancel"
@@ -961,6 +963,7 @@ impl Ui {
             Line::from("  R        Refresh all"),
             Line::from("  f        Fix feed (find moved URL)"),
             Line::from("  s        Toggle played"),
+            Line::from("  S        Mark seen (episode) / seen all (feed)"),
             Line::from("  A        Cycle auto-queue (off/bottom/top)"),
             Line::from("  u        Unsubscribe (subscriptions)"),
             Line::from(""),

@@ -86,6 +86,9 @@ impl AppState {
     ) -> Result<()> {
         tracing::info!("Playing episode: {}", episode.title);
 
+        // Playing acknowledges the episode: it is no longer "new".
+        let _ = self.db.mark_episode_seen(episode.id).await;
+
         // Reflect the selection immediately; the load happens off the loop.
         self.current_episode = Some(episode.clone());
         self.playback_position = start.as_secs_f64();
