@@ -144,12 +144,22 @@ it is foundational.
       item 1, it now surfaces as a `PlaybackError` with the position kept.)
 - [x] **Stage 4 - resume.** Done. `AppState::save_progress` persists the
       per-episode position AND the singleton `playback_state` (episode, rate,
-      volume) on the 1s `PlaybackPosition` tick, on pause, and on quit.
+      volume) on the position tick (throttled to `save_position_interval_seconds`,
+      default 10, so it does not churn the DB), on pause, and on quit.
       `play_episode` reads `episode.playback_position_seconds` and passes it as
       the `start` arg (through to `WsolaSource`/`try_seek`).
       `restore_playback_state` runs on launch: it reloads the last episode
       (shown, not auto-played) and restores rate/volume; pressing play resumes
       from the saved position. First slice of per-episode listen state.
+      **Fixed later (v0.4.x):** background refresh silently erased all of this.
+      `insert_episode` was an `INSERT OR REPLACE`, and the refresher re-inserts
+      every parsed episode, so each refresh deleted+recreated existing rows -
+      resetting position/played/download to feed defaults and (via `Episode::new`
+      minting a fresh id + the `ON DELETE SET NULL`/queue FKs) nulling the
+      now-playing pointer and dropping queued items. It is now a metadata-only
+      upsert (`ON CONFLICT(subscription_id, guid) DO UPDATE`) that preserves
+      identity and every user-state column; downloads/position/played are written
+      by their own dedicated `UPDATE`s, never by `insert_episode`.
 - [x] **Stage 3c - disk retention.** Done. `retention::RetentionManager` keeps
       on-disk audio bounded. Config knobs (`delete_on_finish` default true,
       `max_cache_episodes` default 50, `max_cache_megabytes` default 4096; a cap

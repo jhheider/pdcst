@@ -175,6 +175,9 @@ pub struct AppState {
     /// re-opens the episode from its last position rather than resuming a player
     /// that has already run dry.
     pub stream_interrupted: bool,
+    /// When the resume position was last checkpointed to the DB, so the 1s
+    /// position tick can throttle saves to `save_position_interval_seconds`.
+    pub last_position_save: Option<std::time::Instant>,
 }
 
 /// The shared services AppState is built from, grouped so AppState::new does not
@@ -271,6 +274,7 @@ impl AppState {
             playback_notice: None,
             stream_retry_attempts: 0,
             stream_interrupted: false,
+            last_position_save: None,
         }
     }
 

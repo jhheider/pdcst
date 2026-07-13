@@ -211,6 +211,23 @@ impl AppState {
 
     // Playback persistence (resume)
 
+    /// Checkpoint the resume position, but at most once per
+    /// `save_position_interval_seconds`, so the 1s position tick does not churn
+    /// the DB. Pause/stop/quit call `save_progress` directly (unthrottled), so
+    /// this only bounds how much progress a crash between checkpoints can lose.
+    pub(crate) async fn maybe_checkpoint_progress(&mut self) {
+        let interval =
+            std::time::Duration::from_secs(self.config.save_position_interval_seconds.max(1));
+        let now = std::time::Instant::now();
+        let due = self
+            .last_position_save
+            .is_none_or(|last| now.duration_since(last) >= interval);
+        if due {
+            self.save_progress().await;
+            self.last_position_save = Some(now);
+        }
+    }
+
     /// Persist the current playback position so it survives a pause or quit.
     ///
     /// Writes both the per-episode position (what a later replay resumes from)
