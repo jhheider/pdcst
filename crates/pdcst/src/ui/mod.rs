@@ -18,6 +18,58 @@ fn selection_style() -> Style {
     Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
 }
 
+// --- Semantic colours -------------------------------------------------------
+// A small, meaning-carrying palette so colour is information, not decoration,
+// and the eye gets anchors in a wall of list rows:
+//   cyan   = focus / now-playing        green  = new / unheard / downloaded
+//   yellow = in-progress / queued / busy red    = error / failed
+//   blue   = dates & times              dark-gray = secondary / played / rules
+
+/// Dimmed style for separators and secondary metadata.
+fn dim_style() -> Style {
+    Style::default().fg(Color::DarkGray)
+}
+
+/// Style for a relative date/time (`4 days ago`, `1h 5m`): a calm blue that
+/// stands apart from the gray rules without shouting.
+fn time_style() -> Style {
+    Style::default().fg(Color::Blue)
+}
+
+/// The now-playing `>` marker pops in the focus accent; an idle row is blank.
+fn now_marker_style(is_now: bool) -> Style {
+    if is_now {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    }
+}
+
+/// Listen-state marker colour: in-progress (a saved resume position) pops
+/// yellow, a finished episode dims, an unheard one is plain.
+fn listen_marker_style(ep: &Episode) -> Style {
+    if ep.played {
+        Style::default().fg(Color::DarkGray)
+    } else if ep.playback_position_seconds > 0 {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    }
+}
+
+/// Download-status icon colour: done green, in-flight yellow, failed red.
+fn download_icon_style(status: &crate::models::DownloadStatus) -> Style {
+    use crate::models::DownloadStatus::*;
+    match status {
+        Downloaded => Style::default().fg(Color::Green),
+        Downloading => Style::default().fg(Color::Yellow),
+        Failed => Style::default().fg(Color::Red),
+        NotDownloaded => Style::default().fg(Color::DarkGray),
+    }
+}
+
 /// Border colour for a pane: cyan when it holds keyboard focus, dim otherwise,
 /// so it is always obvious which pane the keys drive.
 fn pane_border(focused: bool) -> Color {
@@ -243,20 +295,32 @@ impl Ui {
                     Span::styled(sub.title.clone(), title_style),
                 ]);
 
-                // Line 2: the error (if any), else the counts + newest-episode age
-                // (all already in the model - see get_all_subscriptions).
+                // Line 2: the error (if any), else the counts + newest-episode
+                // age. A nonzero unheard count is green so feeds with something
+                // new to hear catch the eye; the age is blue like episode dates.
+                let dim = dim_style();
                 let line2 = if let Some(err) = &sub.last_error {
                     Line::from(Span::styled(
                         format!("   {err}"),
                         Style::default().fg(Color::Red),
                     ))
                 } else {
-                    let mut detail =
-                        format!("   {} new | {} eps", sub.unplayed_count, sub.episode_count);
+                    let new_style = if sub.unplayed_count > 0 {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        dim
+                    };
+                    let mut spans = vec![
+                        Span::raw("   "),
+                        Span::styled(format!("{} new", sub.unplayed_count), new_style),
+                        Span::styled(" | ", dim),
+                        Span::styled(format!("{} eps", sub.episode_count), dim),
+                    ];
                     if let Some(latest) = &sub.latest_episode_at {
-                        detail.push_str(&format!(" | {}", format_relative_time(latest)));
+                        spans.push(Span::styled(" | ", dim));
+                        spans.push(Span::styled(format_relative_time(latest), time_style()));
                     }
-                    Line::from(Span::styled(detail, Style::default().fg(Color::DarkGray)))
+                    Line::from(spans)
                 };
 
                 ListItem::new(vec![line1, line2])
@@ -330,10 +394,10 @@ impl Ui {
                 } else {
                     Style::default().fg(Color::White)
                 };
-                let dim = Style::default().fg(Color::DarkGray);
+                let dim = dim_style();
 
-                let now = if playing_id == Some(ep.id) { ">" } else { " " };
-                let listen = listen_marker(ep);
+                let is_now = playing_id == Some(ep.id);
+                let now = if is_now { ">" } else { " " };
                 let download_icon = match &ep.download_status {
                     crate::models::DownloadStatus::Downloaded => "v",
                     crate::models::DownloadStatus::Downloading => "|",
@@ -341,23 +405,35 @@ impl Ui {
                     crate::models::DownloadStatus::NotDownloaded => " ",
                 };
 
-                // Line 1: state markers + title.
+                // Line 1: state markers (each in its own semantic colour) + title.
                 let line1 = Line::from(vec![
-                    Span::styled(format!("{now}{listen} {download_icon} "), Style::default()),
+                    Span::styled(now, now_marker_style(is_now)),
+                    Span::styled(listen_marker(ep), listen_marker_style(ep)),
+                    Span::raw(" "),
+                    Span::styled(download_icon, download_icon_style(&ep.download_status)),
+                    Span::raw(" "),
                     Span::styled(ep.title.clone(), title_style),
                 ]);
 
-                // Line 2: newest-first date, duration, and a queue badge - the
-                // fields already in the model that a one-line row had no room for.
-                let mut meta = format!(
-                    "   {} | {}",
-                    format_relative_time(&ep.published_at),
-                    ep.duration_formatted()
-                );
+                // Line 2: newest-first date (blue), duration, and a queue badge
+                // (yellow) - fields already in the model, coloured so each card
+                // has an anchor rather than another gray line.
+                let mut line2_spans = vec![
+                    Span::raw("   "),
+                    Span::styled(format_relative_time(&ep.published_at), time_style()),
+                    Span::styled(" | ", dim),
+                    Span::styled(ep.duration_formatted(), dim),
+                ];
                 if queued.contains(&ep.id) {
-                    meta.push_str(" | queued");
+                    line2_spans.push(Span::styled(" | ", dim));
+                    line2_spans.push(Span::styled(
+                        "queued",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ));
                 }
-                let line2 = Line::from(Span::styled(meta, dim));
+                let line2 = Line::from(line2_spans);
 
                 // Line 3: a one-line description snippet, if there is one.
                 let mut lines = vec![line1, line2];
@@ -422,16 +498,17 @@ impl Ui {
             .iter()
             .enumerate()
             .map(|(i, ep)| {
-                let now = if playing_id == Some(ep.id) { ">" } else { " " };
-                let text = format!(
-                    "{}{} {:2}. {} | {}",
-                    now,
-                    listen_marker(ep),
-                    i + 1,
-                    ep.title,
-                    ep.duration_formatted()
-                );
-                ListItem::new(text)
+                let is_now = playing_id == Some(ep.id);
+                let now = if is_now { ">" } else { " " };
+                let dim = dim_style();
+                ListItem::new(Line::from(vec![
+                    Span::styled(now, now_marker_style(is_now)),
+                    Span::styled(listen_marker(ep), listen_marker_style(ep)),
+                    Span::styled(format!(" {:2}. ", i + 1), dim),
+                    Span::styled(ep.title.clone(), Style::default().fg(Color::White)),
+                    Span::styled(" | ", dim),
+                    Span::styled(ep.duration_formatted(), dim),
+                ]))
             })
             .collect();
 
@@ -706,31 +783,55 @@ impl Ui {
 
         // Playback status line: now-playing plus a persistent "Up Next: N" so
         // the queue depth is visible from any view (the auto-queue is the point).
-        let up_next = format!("Up Next: {}", state.queue_items.len());
-        let status_text = if let Some(episode) = &state.current_episode {
-            let status_icon = if state.is_playing { ">" } else { "||" };
-            format!(
-                "{} {} | {:.1}x | Vol {:.0}% | {}",
-                status_icon,
-                episode.title,
-                state.playback_speed,
-                state.volume * 100.0,
-                up_next
-            )
+        let dim = dim_style();
+        let queue_len = state.queue_items.len();
+        let up_next_style = if queue_len > 0 {
+            Style::default().fg(Color::Green)
         } else {
-            format!("No episode playing | {}", up_next)
+            dim
         };
-
-        // A stream-drop notice takes over the status line (in yellow) while it is
-        // set - a sticky, non-blocking signal that stays until playback recovers
-        // or the user resumes, rather than a modal or an easy-to-miss timed toast.
-        let (status_text, status_color) = match &state.playback_notice {
-            Some(notice) => (format!("! {notice}"), Color::Yellow),
-            None => (status_text, Color::White),
+        let status = if let Some(notice) = &state.playback_notice {
+            // A stream-drop notice takes over the line (sticky, non-blocking, in
+            // yellow) until playback recovers or the user resumes.
+            Paragraph::new(format!("! {notice}")).style(Style::default().fg(Color::Yellow))
+        } else if let Some(episode) = &state.current_episode {
+            let (icon, icon_style) = if state.is_playing {
+                (
+                    ">",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                (
+                    "||",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+            };
+            Paragraph::new(Line::from(vec![
+                Span::styled(icon, icon_style),
+                Span::raw(" "),
+                Span::styled(episode.title.clone(), Style::default().fg(Color::White)),
+                Span::styled(" | ", dim),
+                Span::styled(
+                    format!("{:.1}x", state.playback_speed),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(" | ", dim),
+                Span::styled(format!("Vol {:.0}%", state.volume * 100.0), dim),
+                Span::styled(" | ", dim),
+                Span::styled(format!("Up Next: {queue_len}"), up_next_style),
+            ]))
+        } else {
+            Paragraph::new(Line::from(vec![
+                Span::styled("No episode playing", dim),
+                Span::styled(" | ", dim),
+                Span::styled(format!("Up Next: {queue_len}"), up_next_style),
+            ]))
         };
-        let status = Paragraph::new(status_text)
-            .style(Style::default().fg(status_color))
-            .alignment(Alignment::Left);
+        let status = status.alignment(Alignment::Left);
 
         f.render_widget(status, chunks[0]);
 

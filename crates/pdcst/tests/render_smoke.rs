@@ -8,10 +8,12 @@ mod common;
 
 use common::{build_state, sample_episode};
 use pdcst::app::state::{AppState, View};
-use pdcst::models::Subscription;
+use pdcst::models::{DownloadStatus, Subscription};
 use pdcst::ui::Ui;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::style::Color;
+use std::collections::HashSet;
 
 fn draw(ui: &Ui, state: &mut AppState) {
     let backend = TestBackend::new(80, 24);
@@ -121,6 +123,48 @@ async fn episode_card_snippet_is_tag_and_joiner_free() {
         !rendered.contains('\u{200D}'),
         "no zero-width joiner should reach the buffer"
     );
+}
+
+/// The set of foreground colours present in the rendered buffer.
+fn fg_colors(ui: &Ui, state: &mut AppState) -> HashSet<Color> {
+    let backend = TestBackend::new(80, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|f| ui.render(f, state)).unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.fg)
+        .collect()
+}
+
+#[tokio::test]
+async fn library_uses_semantic_color() {
+    // An episode that is now-playing + in-progress + queued + downloaded should
+    // paint the full semantic palette, so the eye gets colour anchors.
+    let (mut state, _dir) = build_state().await;
+    let ui = Ui::new();
+
+    let sub = Subscription::new("Show".to_string(), "https://example.com/f.xml".to_string());
+    let mut ep = sample_episode(sub.id, "Episode", false, 600); // position 600 -> in-progress
+    ep.download_status = DownloadStatus::Downloaded;
+    state.current_subscription = Some(sub.clone());
+    state.subscriptions = vec![sub];
+    state.episodes = vec![ep.clone()];
+    state.queue_items = vec![ep.clone()]; // -> queued badge (yellow)
+    state.current_episode = Some(ep); // -> now-playing marker (cyan)
+    state.is_playing = true;
+    state.set_view(View::Episodes);
+
+    let colors = fg_colors(&ui, &mut state);
+    assert!(colors.contains(&Color::Cyan), "now-playing marker is cyan");
+    assert!(colors.contains(&Color::Green), "downloaded icon is green");
+    assert!(
+        colors.contains(&Color::Yellow),
+        "in-progress / queued is yellow"
+    );
+    assert!(colors.contains(&Color::Blue), "episode date is blue");
 }
 
 #[tokio::test]
