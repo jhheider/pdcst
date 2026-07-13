@@ -75,16 +75,15 @@ the single-user daily-driver thesis. Ordered by leverage:
    marked played, `auto_advance` ignores it) instead of `PlaybackCompleted` when
    the download failed mid-stream. So a cellular blip mid-episode no longer marks
    it done and skips ahead. Unit-tested (`run_dry_event`, `failure_handle_*`).
-2. **[ ] Make config reachable at a default path.** `Config::load_default`
-   (`config.rs:7`) never reads a file - it always returns `Config::default()`,
-   and `save_to_file` is called nowhere. So the dials that tune *the auto-queue
-   itself* (`queue_max_depth`, `auto_queue_to_top_default`, `smart_interleave`,
-   `auto_refresh_interval_minutes`, retention caps) can only be changed by
-   hand-authoring a TOML and passing `--config <file>` every launch; the Settings
-   view shows them read-only. Fix: write a commented default TOML on first run
-   (and/or `--print-config`) and have `load_default` read it. Keep it a plain
-   file - **no in-app editor** (that re-imports the settings-heavy UI that was
-   correctly cut).
+2. **[x] Make config reachable at a default path.** DONE. `load_default` now
+   reads `<platform config dir>/pdcst/config.toml` (`Config::default_config_path`)
+   if present, and on first run writes a **commented template** there listing
+   every tunable at its default (the whole file parses to `Config::default` while
+   commented, so it never changes behavior until edited). All fields, including
+   the storage paths, are `#[serde(default)]`, so a partial file is valid. Added
+   `--print-config` (prints the effective config + its file path). Plain file, no
+   in-app editor. Unit-tested (partial fill, template-parses-to-defaults, path,
+   round-trip); `--print-config` verified end to end.
 3. **[x] Subtraction PR (no behavior change).** DONE.
    - Removed the whole **`artwork/` subsystem (~518 lines)**: `ArtworkManager`,
      cache/fetcher/protocol/renderer, its construction + `load_cache_from_disk()`
@@ -100,10 +99,13 @@ the single-user daily-driver thesis. Ordered by leverage:
      `AppEvent`/`from_key_event` keymap, and `ui/components/*` were **already
      gone** (removed in an earlier pass); nothing left to cut there.
 
-**Verdict:** one or two real gaps (items 1-2), then the subtraction PR (item 3),
-after which the roadmap is genuinely done for its purpose. Explicitly still cut:
-config-editing UI, artwork rendering, manual queue reorder, download-progress UI,
-sync, discovery, themes.
+**Verdict:** all three landed (items 1-3 done). The roadmap is now genuinely
+**done, maintenance-only** for its purpose. One optional follow-up noted by the
+UX discussion: a mid-stream drop currently surfaces as a blocking error modal;
+better would be auto-retry (self-heal) then a non-blocking sticky notice in the
+now-playing bar if it can't recover - tracked as a nicety, not a gap. Explicitly
+still cut: config-editing UI, artwork rendering, manual queue reorder,
+download-progress UI, sync, discovery, themes.
 
 ## Phases
 
@@ -356,8 +358,8 @@ for its owner; the core loop closes end to end. Fixes landed this pass:
 Remaining for a public release (Jacob's calls, not built):
 
 - Version reset, name unification, release workflow (above).
-- Config discoverability: `Config` only loads from `--config <file>`; add
-  `--print-config` or write a commented default on first run.
+- ~~Config discoverability~~ DONE (see "What's left" item 2): reads the default
+  path, writes a commented template on first run, `--print-config` added.
 - **Public-vs-personal: decided - personal.** Ships as a personal tool others
   can build ("runs well for me, PRs welcome, no support"). The `wsola` crate is
   **published independently on crates.io** (0.1.0; generally useful and

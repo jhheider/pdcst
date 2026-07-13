@@ -13,6 +13,10 @@ struct Cli {
     #[arg(short, long)]
     config: Option<std::path::PathBuf>,
 
+    /// Print the effective configuration (and its file path), then exit
+    #[arg(long)]
+    print_config: bool,
+
     /// Enable debug logging
     #[arg(short, long)]
     debug: bool,
@@ -33,12 +37,25 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Load configuration
-    let config = if let Some(config_path) = cli.config {
-        Config::load_from_file(&config_path)?
+    // Load configuration. `--config` is an explicit override; otherwise the
+    // default path is read (and a commented template written there on first run).
+    let config_path = cli
+        .config
+        .clone()
+        .unwrap_or_else(Config::default_config_path);
+    let config = if let Some(config_path) = cli.config.as_ref() {
+        Config::load_from_file(config_path)?
     } else {
         Config::load_default()?
     };
+
+    // Print the resolved config and exit, so the tunables are inspectable without
+    // reading the file (and to show where that file lives).
+    if cli.print_config {
+        println!("# config file: {}", config_path.display());
+        print!("{}", toml::to_string_pretty(&config)?);
+        return Ok(());
+    }
 
     // Setup logging
     logging::setup_logging(&config.log_dir, cli.debug)?;
