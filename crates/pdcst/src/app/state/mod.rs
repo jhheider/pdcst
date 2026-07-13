@@ -164,6 +164,17 @@ pub struct AppState {
     pub volume: f32,
     /// The volume to restore when unmuting (the level held before mute).
     pub pre_mute_volume: f32,
+    /// A sticky, non-timed notice shown in the playback bar (e.g. a stream drop).
+    /// Unlike `status_message` it never auto-expires; it clears when the
+    /// condition resolves (playback starts) or the user acts on it.
+    pub playback_notice: Option<String>,
+    /// Consecutive auto-retry attempts for a dropped stream, reset on a
+    /// successful start. Bounds the self-heal so a truly-down network gives up.
+    pub stream_retry_attempts: u32,
+    /// Set when a stream dropped and retries were exhausted: pressing play then
+    /// re-opens the episode from its last position rather than resuming a player
+    /// that has already run dry.
+    pub stream_interrupted: bool,
 }
 
 /// The shared services AppState is built from, grouped so AppState::new does not
@@ -257,6 +268,9 @@ impl AppState {
             playback_speed: 1.0,
             volume: 1.0,
             pre_mute_volume: 1.0,
+            playback_notice: None,
+            stream_retry_attempts: 0,
+            stream_interrupted: false,
         }
     }
 

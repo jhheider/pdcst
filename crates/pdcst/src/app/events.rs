@@ -22,6 +22,12 @@ pub enum StateEvent {
     PlaybackError {
         error: String,
     },
+    /// A progressive stream dropped mid-playback (network failure), as opposed to
+    /// finishing. Drives the bounded auto-retry / sticky-notice self-heal; the
+    /// episode is NOT marked played and its position is kept.
+    StreamInterrupted {
+        episode_id: Uuid,
+    },
 
     // Volume/Speed events
     VolumeChanged {

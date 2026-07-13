@@ -100,12 +100,12 @@ the single-user daily-driver thesis. Ordered by leverage:
      gone** (removed in an earlier pass); nothing left to cut there.
 
 **Verdict:** all three landed (items 1-3 done). The roadmap is now genuinely
-**done, maintenance-only** for its purpose. One optional follow-up noted by the
-UX discussion: a mid-stream drop currently surfaces as a blocking error modal;
-better would be auto-retry (self-heal) then a non-blocking sticky notice in the
-now-playing bar if it can't recover - tracked as a nicety, not a gap. Explicitly
-still cut: config-editing UI, artwork rendering, manual queue reorder,
-download-progress UI, sync, discovery, themes.
+**done, maintenance-only** for its purpose. The UX follow-up is also in: a
+mid-stream drop now **auto-retries** (self-heal, `MAX_STREAM_RETRIES` reconnects
+from the live position) and, only if that gives up, shows a **non-blocking sticky
+notice** in the playback bar ("press play to resume") instead of a blocking modal
+or an easy-to-miss timed toast. Explicitly still cut: config-editing UI, artwork
+rendering, manual queue reorder, download-progress UI, sync, discovery, themes.
 
 ## Phases
 

@@ -469,14 +469,13 @@ fn handle_command(
 }
 
 /// The terminal event when a source runs dry: a mid-stream download failure is a
-/// `PlaybackError` (the app keeps the saved position and does not mark the
-/// episode played), anything else is a natural `PlaybackCompleted`.
+/// `StreamInterrupted` (the app auto-retries / shows a sticky notice, keeps the
+/// saved position, and does not mark the episode played), anything else is a
+/// natural `PlaybackCompleted`.
 fn run_dry_event(episode_id: Uuid, failed: bool) -> StateEvent {
     if failed {
-        tracing::warn!("episode {episode_id} stream failed mid-playback; not marking played");
-        StateEvent::PlaybackError {
-            error: "episode download failed mid-stream; your position was kept".to_string(),
-        }
+        tracing::warn!("episode {episode_id} stream dropped mid-playback; not marking played");
+        StateEvent::StreamInterrupted { episode_id }
     } else {
         StateEvent::PlaybackCompleted { episode_id }
     }

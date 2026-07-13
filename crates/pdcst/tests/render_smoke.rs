@@ -124,6 +124,26 @@ async fn episode_card_snippet_is_tag_and_joiner_free() {
 }
 
 #[tokio::test]
+async fn stream_drop_notice_shows_in_the_playback_bar() {
+    // The sticky stream-drop notice must take over the status line (non-blocking,
+    // no modal), replacing the normal now-playing text while it is set.
+    let (mut state, _dir) = build_state().await;
+    let ui = Ui::new();
+
+    let sub = Subscription::new("Show".to_string(), "https://example.com/f.xml".to_string());
+    let ep = sample_episode(sub.id, "Episode", false, 600);
+    state.current_episode = Some(ep);
+    state.playback_notice = Some("Reconnecting (1/2)...".to_string());
+    state.set_view(View::Queue);
+
+    let rendered = render_to_string(&ui, &mut state);
+    assert!(
+        rendered.contains("Reconnecting (1/2)"),
+        "the sticky notice should reach the playback bar: {rendered:?}"
+    );
+}
+
+#[tokio::test]
 async fn renders_search_view() {
     let (mut state, _dir) = build_state().await;
     let ui = Ui::new();

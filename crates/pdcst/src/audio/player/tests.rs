@@ -17,10 +17,11 @@ fn run_dry_event_distinguishes_failure_from_completion() {
         other => panic!("expected PlaybackCompleted, got {other:?}"),
     }
 
-    // Mid-stream download failure -> error (position kept, not marked played).
+    // Mid-stream download failure -> interruption (auto-retry / sticky notice,
+    // position kept, not marked played), never a completion.
     match run_dry_event(id, true) {
-        StateEvent::PlaybackError { .. } => {}
-        other => panic!("expected PlaybackError, got {other:?}"),
+        StateEvent::StreamInterrupted { episode_id } => assert_eq!(episode_id, id),
+        other => panic!("expected StreamInterrupted, got {other:?}"),
     }
 }
 
