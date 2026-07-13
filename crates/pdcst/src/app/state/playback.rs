@@ -4,12 +4,25 @@
 #[allow(unused_imports)]
 use super::*;
 
+/// Delay before an automatic reconnect attempt after a stream drops - long
+/// enough to ride out a brief blip, short enough to feel responsive.
+const STREAM_RETRY_DELAY: Duration = Duration::from_secs(2);
+
 impl AppState {
     pub async fn toggle_playback(&mut self) -> Result<()> {
         if self.is_playing {
             self.audio_player.pause().await;
             // Checkpoint on pause so a mid-episode pause survives a quit.
             self.save_progress().await;
+        } else if self.stream_interrupted {
+            // A stream dropped and auto-retry gave up; pressing play re-opens the
+            // episode from where it left off (the player has already run dry, so a
+            // plain resume would do nothing).
+            if let Some(episode) = self.current_episode.clone() {
+                self.clear_stream_interruption();
+                let start = Duration::from_secs_f64(self.playback_position.max(0.0));
+                self.play_episode_at(episode, start).await?;
+            }
         } else if self.audio_player.get_current_episode().await.is_some() {
             // Episode already loaded (paused mid-listen) - just resume.
             self.audio_player.play().await;
@@ -21,6 +34,35 @@ impl AppState {
         Ok(())
     }
 
+    /// Clear the stream-drop self-heal state (sticky notice, retry counter, and
+    /// the interrupted flag). Called on a successful start or a manual resume.
+    pub(crate) fn clear_stream_interruption(&mut self) {
+        self.playback_notice = None;
+        self.stream_retry_attempts = 0;
+        self.stream_interrupted = false;
+    }
+
+    /// Re-open the current episode from where it left off, in the background,
+    /// after a short delay. A further failure republishes `StreamInterrupted` so
+    /// the retry counter advances; success publishes `PlaybackStarted` as usual.
+    pub(crate) fn spawn_stream_retry(&self) {
+        let Some(episode) = self.current_episode.clone() else {
+            return;
+        };
+        let start = Duration::from_secs_f64(self.playback_position.max(0.0));
+        let audio_player = self.audio_player.clone();
+        let audio_streamer = self.audio_streamer.clone();
+        let event_bus = self.event_bus.clone();
+        let episode_id = episode.id;
+        tokio::spawn(async move {
+            tokio::time::sleep(STREAM_RETRY_DELAY).await;
+            if let Err(e) = load_and_play(&audio_player, &audio_streamer, &episode, start).await {
+                tracing::warn!("stream reconnect for '{}' failed: {}", episode.title, e);
+                event_bus.publish(StateEvent::StreamInterrupted { episode_id });
+            }
+        });
+    }
+
     /// Start playing an episode, resuming from its saved position if any.
     ///
     /// The audio fetch (a whole-body HTTP download or a file read) runs in a
@@ -29,10 +71,20 @@ impl AppState {
     /// publishes `PlaybackStarted`, which clears the loading status; a failure
     /// publishes `PlaybackError`, which surfaces as an error modal.
     pub(crate) async fn play_episode(&mut self, episode: Episode) -> Result<()> {
-        tracing::info!("Playing episode: {}", episode.title);
-
         // Resume where we left off (0 for a fresh episode).
         let start = Duration::from_secs(episode.playback_position_seconds.max(0) as u64);
+        self.play_episode_at(episode, start).await
+    }
+
+    /// Start playing `episode` from an explicit `start` position. Used by
+    /// `play_episode` (resume from the saved position) and by a stream-drop
+    /// resume (re-open from the live position).
+    pub(crate) async fn play_episode_at(
+        &mut self,
+        episode: Episode,
+        start: Duration,
+    ) -> Result<()> {
+        tracing::info!("Playing episode: {}", episode.title);
 
         // Reflect the selection immediately; the load happens off the loop.
         self.current_episode = Some(episode.clone());

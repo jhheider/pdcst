@@ -5,6 +5,11 @@ use super::App;
 use crate::app::events::StateEvent;
 use anyhow::Result;
 
+/// How many times to silently reconnect a dropped stream before giving up and
+/// leaving a sticky "press play to resume" notice. Bounds the self-heal so a
+/// genuinely-down network does not retry forever.
+const MAX_STREAM_RETRIES: u32 = 2;
+
 impl App {
     pub(crate) async fn handle_state_event(&mut self, event: StateEvent) -> Result<()> {
         use StateEvent::*;
@@ -12,8 +17,10 @@ impl App {
         match event {
             PlaybackStarted { episode_id } => {
                 self.state.is_playing = true;
-                // The load finished: drop the "Loading..." status.
+                // The load finished: drop the "Loading..." status, and clear any
+                // stream-drop self-heal state - a successful start means we healed.
                 self.state.clear_status();
+                self.state.clear_stream_interruption();
                 // Keep current_episode in sync. The manual play path already set
                 // it, but auto-advance plays directly, so load it if it differs.
                 if self.state.current_episode.as_ref().map(|e| e.id) != Some(episode_id)
@@ -45,11 +52,35 @@ impl App {
             }
             PlaybackError { error } => {
                 tracing::error!("Playback error: {}", error);
-                // A failure ends playback (e.g. a mid-stream download drop); clear
-                // the playing indicator. The saved position is untouched, and the
-                // episode is not marked played, so it resumes where it left off.
+                // A failure ends playback; clear the playing indicator. The saved
+                // position is untouched and the episode is not marked played, so it
+                // resumes where it left off.
                 self.state.is_playing = false;
                 self.state.show_error(format!("Playback error: {}", error));
+            }
+            StreamInterrupted { episode_id } => {
+                // Only the currently-playing episode's stream matters (a stale
+                // event from a superseded play is ignored).
+                if self.state.current_episode.as_ref().map(|e| e.id) == Some(episode_id) {
+                    self.state.is_playing = false;
+                    self.state.stream_retry_attempts += 1;
+                    let attempt = self.state.stream_retry_attempts;
+                    if attempt <= MAX_STREAM_RETRIES {
+                        // Self-heal: reconnect from the live position, no modal.
+                        tracing::info!("stream dropped; reconnect attempt {attempt}");
+                        self.state.playback_notice =
+                            Some(format!("Reconnecting ({attempt}/{MAX_STREAM_RETRIES})..."));
+                        self.state.spawn_stream_retry();
+                    } else {
+                        // Retries exhausted: a non-blocking sticky notice (not a
+                        // modal, not a timed toast that could expire unseen). The
+                        // position is kept; pressing play re-opens the stream.
+                        tracing::warn!("stream reconnect gave up after {MAX_STREAM_RETRIES} tries");
+                        self.state.stream_interrupted = true;
+                        self.state.playback_notice =
+                            Some("Stream interrupted - press play to resume".to_string());
+                    }
+                }
             }
             VolumeChanged { volume } => {
                 self.state.volume = volume;

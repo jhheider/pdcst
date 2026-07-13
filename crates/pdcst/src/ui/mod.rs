@@ -721,8 +721,15 @@ impl Ui {
             format!("No episode playing | {}", up_next)
         };
 
+        // A stream-drop notice takes over the status line (in yellow) while it is
+        // set - a sticky, non-blocking signal that stays until playback recovers
+        // or the user resumes, rather than a modal or an easy-to-miss timed toast.
+        let (status_text, status_color) = match &state.playback_notice {
+            Some(notice) => (format!("! {notice}"), Color::Yellow),
+            None => (status_text, Color::White),
+        };
         let status = Paragraph::new(status_text)
-            .style(Style::default().fg(Color::White))
+            .style(Style::default().fg(status_color))
             .alignment(Alignment::Left);
 
         f.render_widget(status, chunks[0]);
