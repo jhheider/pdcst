@@ -21,6 +21,23 @@ fn draw(ui: &Ui, state: &mut AppState) {
         .expect("render must not panic");
 }
 
+/// Draw a view and return the full rendered buffer as one string, so tests can
+/// assert on what actually reaches the terminal cells.
+fn render_to_string(ui: &Ui, state: &mut AppState) -> String {
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| ui.render(f, state))
+        .expect("render must not panic");
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
 #[tokio::test]
 async fn renders_every_view_empty() {
     let (mut state, _dir) = build_state().await;
@@ -69,6 +86,41 @@ async fn renders_populated_lists_with_markers() {
         state.selected_index = 2;
         draw(&ui, &mut state);
     }
+}
+
+#[tokio::test]
+async fn episode_card_snippet_is_tag_and_joiner_free() {
+    // The description snippet must strip HTML markup and must not carry a raw ZWJ
+    // (feed text is normalized at ingest; this guards the render path too). A wide
+    // multibyte title must also draw without panicking or leaking markup.
+    let (mut state, _dir) = build_state().await;
+    let ui = Ui::new();
+
+    let sub = Subscription::new(
+        "Wide \u{65E5}\u{672C}\u{8A9E} Show".to_string(),
+        "https://example.com/feed.xml".to_string(),
+    );
+    let mut ep = sample_episode(sub.id, "Curly \u{2019}quotes\u{2019} here", false, 0);
+    ep.description = Some("<p>Clean <b>preview</b> text \u{2014} no markup</p>".to_string());
+
+    state.current_subscription = Some(sub.clone());
+    state.subscriptions = vec![sub];
+    state.episodes = vec![ep];
+    state.set_view(View::Episodes);
+
+    let rendered = render_to_string(&ui, &mut state);
+    assert!(
+        rendered.contains("Clean preview text"),
+        "snippet should be tag-stripped: {rendered:?}"
+    );
+    assert!(
+        !rendered.contains("<p>") && !rendered.contains("<b>"),
+        "no raw HTML tags should reach the buffer"
+    );
+    assert!(
+        !rendered.contains('\u{200D}'),
+        "no zero-width joiner should reach the buffer"
+    );
 }
 
 #[tokio::test]

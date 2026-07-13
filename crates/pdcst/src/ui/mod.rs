@@ -1,5 +1,6 @@
 use crate::app::{AppState, state::Modal, state::SearchFocus, state::View};
 use crate::models::Episode;
+use crate::utils::text::truncate_display;
 use crate::utils::time::{format_duration, format_relative_time};
 use ratatui::{
     Frame,
@@ -56,8 +57,10 @@ fn listen_marker(ep: &Episode) -> &'static str {
 
 /// A one-line, tag-stripped preview of an episode description for the card's
 /// third line. HTML tags and collapsed whitespace are removed; the result is
-/// truncated to `max` characters. Returns an empty string when there's nothing
-/// worth showing.
+/// truncated to `max` display columns (grapheme-aware, so a cluster is never
+/// split). Feed text is already entity-decoded and emoji-normalized at ingest
+/// (see [`crate::utils::text::clean_feed_text`]), so this only strips markup and
+/// bounds the width. Returns an empty string when there's nothing worth showing.
 fn description_snippet(desc: &str, max: usize) -> String {
     let mut out = String::new();
     let mut in_tag = false;
@@ -78,17 +81,8 @@ fn description_snippet(desc: &str, max: usize) -> String {
                 last_was_space = false;
             }
         }
-        if out.chars().count() >= max {
-            break;
-        }
     }
-    let trimmed = out.trim_end();
-    if trimmed.chars().count() >= max {
-        let kept: String = trimmed.chars().take(max.saturating_sub(3)).collect();
-        format!("{kept}...")
-    } else {
-        trimmed.to_string()
-    }
+    truncate_display(out.trim_end(), max)
 }
 
 pub struct Ui;
@@ -1024,8 +1018,9 @@ mod tests {
     fn snippet_truncates_with_ellipsis() {
         let long = "abcdefghijklmnopqrstuvwxyz";
         let out = description_snippet(long, 10);
+        // At most `max` display columns, ending in a single ellipsis glyph.
         assert_eq!(out.chars().count(), 10);
-        assert!(out.ends_with("..."));
+        assert!(out.ends_with('\u{2026}'));
     }
 
     #[test]

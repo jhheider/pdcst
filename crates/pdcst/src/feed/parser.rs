@@ -1,4 +1,5 @@
 use crate::models::{Episode, Subscription};
+use crate::utils::text::clean_feed_text;
 use anyhow::{Context, Result};
 use atom_syndication::Feed;
 use chrono::{DateTime, Utc};
@@ -29,13 +30,16 @@ impl FeedParser {
     }
 
     pub fn subscription_from_channel(rss_url: String, channel: &Channel) -> Subscription {
-        let mut sub = Subscription::new(channel.title().to_string(), rss_url);
+        // Feed text carries HTML entities the XML layer does not resolve and, in
+        // titles/notes, ZWJ emoji that break terminal width math. Normalize once
+        // here so the stored title/description/author are clean, render-safe UTF-8.
+        let mut sub = Subscription::new(clean_feed_text(channel.title()), rss_url);
 
-        sub.description = Some(channel.description().to_string());
+        sub.description = Some(clean_feed_text(channel.description()));
         sub.author = channel
             .itunes_ext()
             .and_then(|itunes| itunes.author())
-            .map(|s| s.to_string());
+            .map(clean_feed_text);
         sub.website_url = Some(channel.link().to_string());
         sub.artwork_url = channel
             .image()
@@ -67,7 +71,7 @@ impl FeedParser {
     }
 
     fn episode_from_item(subscription_id: uuid::Uuid, item: &rss::Item) -> Option<Episode> {
-        let title = item.title()?.to_string();
+        let title = clean_feed_text(item.title()?);
         let url = item.enclosure()?.url().to_string();
         let guid = item
             .guid()
@@ -86,7 +90,7 @@ impl FeedParser {
 
         let mut episode = Episode::new(subscription_id, title, url, guid, published_at);
 
-        episode.description = item.description().map(|s| s.to_string());
+        episode.description = item.description().map(clean_feed_text);
 
         if let Some(enclosure) = item.enclosure() {
             episode.file_type = Some(enclosure.mime_type().to_string());
@@ -124,7 +128,7 @@ impl FeedParser {
             return None;
         }
 
-        let title = entry.title().value.clone();
+        let title = clean_feed_text(&entry.title().value);
         let guid = if entry.id().is_empty() {
             url.clone()
         } else {
@@ -141,8 +145,8 @@ impl FeedParser {
         let mut episode = Episode::new(subscription_id, title, url, guid, published_at);
         episode.description = entry
             .summary()
-            .map(|t| t.value.clone())
-            .or_else(|| entry.content().and_then(|c| c.value().map(String::from)));
+            .map(|t| clean_feed_text(&t.value))
+            .or_else(|| entry.content().and_then(|c| c.value().map(clean_feed_text)));
         episode.file_type = enclosure.mime_type().map(String::from);
         episode.file_size_bytes = enclosure.length().and_then(|l| l.parse::<i64>().ok());
 
@@ -235,6 +239,38 @@ mod tests {
         assert_eq!(eps[0].file_size_bytes, Some(456));
         assert_eq!(eps[0].file_type.as_deref(), Some("audio/mpeg"));
         assert_eq!(eps[0].description.as_deref(), Some("An atom episode."));
+    }
+
+    #[test]
+    fn ingest_normalizes_entities_and_emoji_in_title_and_description() {
+        // A ZWJ rainbow flag (flag + VS16 + ZWJ + rainbow) plus HTML entities,
+        // injected via escapes since a raw string would not interpret `\u{}`.
+        let flag = "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}";
+        let rss = format!(
+            r#"<?xml version="1.0"?>
+            <rss version="2.0"><channel><title>Q&amp;A Show</title><description>d</description>
+            <link>https://example.com</link>
+            <item>
+                <title>It&#8217;s here &amp; now {flag}</title>
+                <description>Ben &amp; Jerry&#x2019;s &mdash; a review</description>
+                <guid>guid-1</guid>
+                <enclosure url="https://example.com/1.mp3" length="123" type="audio/mpeg"/>
+            </item>
+            </channel></rss>"#
+        );
+
+        let sub_id = uuid::Uuid::new_v4();
+        let eps = FeedParser::parse_episodes(sub_id, &rss).unwrap();
+        // Entities decoded; the ZWJ flag's joiners stripped to width-honest bases.
+        assert_eq!(eps[0].title, "It\u{2019}s here & now \u{1F3F3}\u{1F308}");
+        assert_eq!(
+            eps[0].description.as_deref(),
+            Some("Ben & Jerry\u{2019}s \u{2014} a review")
+        );
+
+        let channel = FeedParser::parse_channel(&rss).unwrap();
+        let sub = FeedParser::subscription_from_channel("https://x/feed".into(), &channel);
+        assert_eq!(sub.title, "Q&A Show");
     }
 
     #[test]
