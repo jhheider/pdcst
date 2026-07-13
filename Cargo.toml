@@ -56,6 +56,10 @@ url = "2.5"
 bytes = "1.9"
 futures = "0.3"
 urlencoding = "2.1"
+# Text width/segmentation for terminal-safe rendering. Already in the tree via
+# ratatui; promoted to direct deps (no new tree) for feed-text normalization.
+unicode-width = "0.2"
+unicode-segmentation = "1"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
