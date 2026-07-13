@@ -1,6 +1,6 @@
 [package]
 name = "pdcst"
-version = "0.3.0"
+version = "0.3.1"
 description = "A fast, keyboard-driven terminal podcast player"
 edition.workspace = true
 license.workspace = true

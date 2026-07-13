@@ -1,10 +1,10 @@
 name: CI
 
-# Thin caller over jhheider/rust-ci (see that repo's README). Private repo, so
-# everything routes to the self-hosted arm64 runner (studio-pdcst). rodio needs
-# ALSA headers at build time, so that runner's image carries libasound2-dev +
-# pkg-config (see jhheider/gha-runner images/pdcst); the stock hosted runners
-# would need an apt step this thin caller does not provide.
+# Thin caller over jhheider/rust-ci (see that repo's README). Public repo, so
+# everything runs on free hosted runners. rodio needs ALSA headers to build on
+# Linux, installed via the `system-packages` input (rust-ci v1.5.0+); macOS uses
+# CoreAudio (no dep). The matrix is Linux + macOS to match the shipped targets;
+# Windows is not built.
 on:
   push:
     branches: [main]
@@ -20,7 +20,7 @@ jobs:
   ci:
     uses: jhheider/rust-ci/.github/workflows/ci.yml@v1
     with:
-      os: '["self-hosted"]'
-      runs-on: self-hosted
+      os: '["ubuntu-latest","macos-latest"]'
       coverage: true
+      system-packages: "libasound2-dev pkg-config"
     secrets: inherit
