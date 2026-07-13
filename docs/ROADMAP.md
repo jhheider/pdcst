@@ -230,11 +230,12 @@ wired `AppState` over a temp DB.
 `delete_on_finish` already reclaims; ceremony for a single user); download-progress
 UI; manual queue reorder (smart-interleave is the ordering story); adopting the
 dead `PlaybackPanel`/alt keymap (do the subtraction, skip the adoption).
-- [ ] **Delete the dead subsystems** (subtraction only): 30-variant `PodcastError`
-      (app uses `anyhow`), `AppEvent`/`from_key_event` (second unused keymap),
-      `ui/components/*`. Its own no-behavior-change PR.
-- [ ] Add a `TestBackend` smoke test per view once `ListState` lands, targeting
-      the input-routing/queue-operability paths where showstoppers cluster.
+- [x] **Delete the dead subsystems** DONE (subtraction PR, plus the earlier pass
+      that removed `PodcastError`/`AppEvent`/`from_key_event`/`ui/components`; the
+      `artwork/` subsystem went in the same "What's left" item 3 PR).
+- [x] Add a `TestBackend` smoke test per view DONE: `tests/render_smoke.rs` draws
+      every view (empty, populated, modals, search) and now also asserts buffer
+      content (feed-text snippet, the stream-drop notice).
 
 ### Phase C - the auto-queue (THE DEAL)
 
