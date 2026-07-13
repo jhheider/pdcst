@@ -52,6 +52,11 @@ pub struct Subscription {
     /// to the bottom (push). Only meaningful when `auto_queue` is set.
     #[serde(default)]
     pub auto_queue_to_top: bool,
+    /// Episode ordering for browsing/queueing: false = newest-first (news), true
+    /// = oldest-first (serial/narrative, consumed in publication order). Guessed
+    /// at subscribe time, toggled with `O`.
+    #[serde(default)]
+    pub queue_oldest_first: bool,
     pub priority: SubscriptionPriority,
     pub auto_download: bool,
     pub last_refreshed: DateTime<Utc>,
@@ -88,6 +93,7 @@ impl Subscription {
             categories: Vec::new(),
             auto_queue: false,
             auto_queue_to_top: false,
+            queue_oldest_first: false,
             priority: SubscriptionPriority::Medium,
             auto_download: false,
             last_refreshed: now,

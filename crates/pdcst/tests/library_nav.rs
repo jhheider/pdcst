@@ -8,6 +8,47 @@ use pdcst::app::state::{Modal, PendingAction, SearchFocus, View};
 use pdcst::feed::SearchResult;
 use pdcst::models::Subscription;
 
+/// An oldest-first feed reverses the (newest-first) query so it reads and queues
+/// top-to-bottom in publication order.
+#[tokio::test]
+async fn oldest_first_reverses_episode_order() {
+    let (mut state, _dir) = build_state().await;
+    let mut sub = Subscription::new("Serial".into(), "https://example.com/s.xml".into());
+    sub.queue_oldest_first = true;
+    state.db.insert_subscription(&sub).await.unwrap();
+    for (i, t) in ["ep1", "ep2", "ep3"].iter().enumerate() {
+        let mut ep = sample_episode(sub.id, t, false, 0);
+        ep.published_at = chrono::Utc::now() - chrono::Duration::days(3 - i as i64);
+        state.db.insert_episode(&ep).await.unwrap();
+    }
+    state.load_subscriptions().await.unwrap();
+    state.load_episodes_for_subscription(sub.id).await.unwrap();
+    assert_eq!(
+        state.episodes.first().unwrap().title,
+        "ep1",
+        "oldest on top"
+    );
+    assert_eq!(
+        state.episodes.last().unwrap().title,
+        "ep3",
+        "newest at bottom"
+    );
+
+    // Flipping back to newest-first restores descending order.
+    state
+        .db
+        .update_subscription_queue_order(sub.id, false)
+        .await
+        .unwrap();
+    state.load_subscriptions().await.unwrap();
+    state.load_episodes_for_subscription(sub.id).await.unwrap();
+    assert_eq!(
+        state.episodes.first().unwrap().title,
+        "ep3",
+        "newest on top"
+    );
+}
+
 /// The left (Subscriptions) and right (Episodes) panes keep separate cursors, so
 /// drilling into a feed and backing out returns to the same subscription.
 #[tokio::test]

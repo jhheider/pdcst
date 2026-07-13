@@ -12,7 +12,7 @@ use super::Database;
 const SELECT_ALL_SUBSCRIPTIONS: &str = r#"
     SELECT s.id, s.title, s.description, s.author, s.rss_url, s.website_url,
            s.artwork_url, s.artwork_path, s.categories, s.auto_queue,
-           s.auto_queue_to_top, s.priority, s.auto_download, s.last_refreshed,
+           s.auto_queue_to_top, s.queue_oldest_first, s.priority, s.auto_download, s.last_refreshed,
            s.created_at, s.last_error,
            COUNT(e.id) AS episode_count,
            COALESCE(SUM(CASE WHEN e.is_new = 1 AND e.played = 0 THEN 1 ELSE 0 END), 0) AS new_count,
@@ -27,7 +27,7 @@ const SELECT_ALL_SUBSCRIPTIONS: &str = r#"
 const SELECT_ONE_SUBSCRIPTION: &str = r#"
     SELECT s.id, s.title, s.description, s.author, s.rss_url, s.website_url,
            s.artwork_url, s.artwork_path, s.categories, s.auto_queue,
-           s.auto_queue_to_top, s.priority, s.auto_download, s.last_refreshed,
+           s.auto_queue_to_top, s.queue_oldest_first, s.priority, s.auto_download, s.last_refreshed,
            s.created_at, s.last_error,
            COUNT(e.id) AS episode_count,
            COALESCE(SUM(CASE WHEN e.is_new = 1 AND e.played = 0 THEN 1 ELSE 0 END), 0) AS new_count,
@@ -55,6 +55,7 @@ fn row_to_subscription(row: &SqliteRow) -> Result<Subscription> {
         categories,
         auto_queue: row.try_get("auto_queue")?,
         auto_queue_to_top: row.try_get("auto_queue_to_top")?,
+        queue_oldest_first: row.try_get("queue_oldest_first")?,
         priority: row.try_get::<String, _>("priority")?.parse().unwrap(),
         auto_download: row.try_get("auto_download")?,
         last_refreshed: row.try_get("last_refreshed")?,
@@ -78,9 +79,9 @@ impl Database {
             r#"
             INSERT INTO subscriptions
             (id, title, description, author, rss_url, website_url, artwork_url, artwork_path,
-             categories, auto_queue, auto_queue_to_top, priority, auto_download,
+             categories, auto_queue, auto_queue_to_top, queue_oldest_first, priority, auto_download,
              last_refreshed, created_at, last_error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(sub.id.to_string())
@@ -94,6 +95,7 @@ impl Database {
         .bind(categories_json)
         .bind(sub.auto_queue)
         .bind(sub.auto_queue_to_top)
+        .bind(sub.queue_oldest_first)
         .bind(sub.priority.as_str())
         .bind(sub.auto_download)
         .bind(sub.last_refreshed)
@@ -145,6 +147,21 @@ impl Database {
         sqlx::query("UPDATE subscriptions SET auto_queue = ?, auto_queue_to_top = ? WHERE id = ?")
             .bind(auto_queue)
             .bind(to_top)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Set a subscription's episode order (false = newest-first, true =
+    /// oldest-first).
+    pub async fn update_subscription_queue_order(
+        &self,
+        id: Uuid,
+        oldest_first: bool,
+    ) -> Result<()> {
+        sqlx::query("UPDATE subscriptions SET queue_oldest_first = ? WHERE id = ?")
+            .bind(oldest_first)
             .bind(id.to_string())
             .execute(&self.pool)
             .await?;

@@ -872,7 +872,7 @@ impl Ui {
         // opening Help. A common tail carries the always-available keys.
         let view_hint = match state.current_view {
             View::Subscriptions => {
-                "[l/Enter] Episodes  [A] Auto-queue  [S] Seen all  [r] Refresh  [f] Fix  [u] Unsub"
+                "[l/Enter] Episodes  [A] Auto-queue  [O] Order  [S] Seen all  [r] Refresh  [u] Unsub"
             }
             View::Episodes => {
                 "[Enter] Play  [h/Esc] Back  [a] Queue  [d] Download  [s] Played  [S] Seen"
@@ -965,6 +965,7 @@ impl Ui {
             Line::from("  s        Toggle played"),
             Line::from("  S        Mark seen (episode) / seen all (feed)"),
             Line::from("  A        Cycle auto-queue (off/bottom/top)"),
+            Line::from("  O        Toggle order (newest / oldest first)"),
             Line::from("  u        Unsubscribe (subscriptions)"),
             Line::from(""),
             Line::from(Span::styled("Other:", Style::default().fg(Color::Cyan))),
