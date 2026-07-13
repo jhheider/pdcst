@@ -10,7 +10,6 @@ impl Config {
         // Create directories if they don't exist
         fs::create_dir_all(&config.data_dir).context("Failed to create data directory")?;
         fs::create_dir_all(&config.download_dir).context("Failed to create download directory")?;
-        fs::create_dir_all(&config.artwork_dir).context("Failed to create artwork directory")?;
         fs::create_dir_all(&config.log_dir).context("Failed to create log directory")?;
 
         Ok(config)
@@ -25,7 +24,6 @@ impl Config {
         // Create directories if they don't exist
         fs::create_dir_all(&config.data_dir)?;
         fs::create_dir_all(&config.download_dir)?;
-        fs::create_dir_all(&config.artwork_dir)?;
         fs::create_dir_all(&config.log_dir)?;
 
         Ok(config)

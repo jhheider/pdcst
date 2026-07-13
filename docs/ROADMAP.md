@@ -85,20 +85,20 @@ the single-user daily-driver thesis. Ordered by leverage:
    (and/or `--print-config`) and have `load_default` read it. Keep it a plain
    file - **no in-app editor** (that re-imports the settings-heavy UI that was
    correctly cut).
-3. **[ ] Subtraction PR (no behavior change).** The existing Phase B "delete dead
-   subsystems" item, expanded by the review:
-   - The whole **`artwork/` subsystem (~518 lines)** is live-wired but
-     dead-ended: `ArtworkManager` is built, `load_cache_from_disk()` runs at
-     startup (`app/mod.rs:76`), `library.rs:134` populates `artwork_url` - yet
-     the renderer is the deliberately-cut stub, so it does real startup I/O for a
-     feature that renders nothing. Cut it wholesale.
-   - **Dead/misleading config knobs**: `keybindings`, `theme.colors`,
-     `show_artwork`, `artwork_protocol`, `artwork_dir`, `trim_silence` are never
-     read; worse, `skip_forward_seconds`/`skip_backward_seconds` are unused *and
-     inverted* vs the hardcoded 10s/30s bindings, so setting them is a silent
-     no-op. Delete them from `Config`.
-   - Plus the originally-listed 30-variant `PodcastError` (app uses `anyhow`),
-     the second `AppEvent`/`from_key_event` keymap, and `ui/components/*`.
+3. **[x] Subtraction PR (no behavior change).** DONE.
+   - Removed the whole **`artwork/` subsystem (~518 lines)**: `ArtworkManager`,
+     cache/fetcher/protocol/renderer, its construction + `load_cache_from_disk()`
+     startup I/O, and the `artwork_manager` fields on `Services`/`AppState`. The
+     inert `Subscription.artwork_url`/`artwork_path` *data* columns are kept (they
+     do no I/O, and dropping DB columns would be a schema change, not "no behavior
+     change") - only the live-but-dead subsystem is gone.
+   - Deleted the **dead/misleading config knobs**: `keybindings`/`KeyBindings`,
+     `theme`/`Theme`, `show_artwork`, `artwork_protocol`/`ArtworkProtocol`,
+     `artwork_dir`, `trim_silence`, and the unused-and-inverted
+     `skip_forward_seconds`/`skip_backward_seconds` (input.rs hardcodes 10s/30s).
+   - The originally-listed 30-variant `PodcastError`, second
+     `AppEvent`/`from_key_event` keymap, and `ui/components/*` were **already
+     gone** (removed in an earlier pass); nothing left to cut there.
 
 **Verdict:** one or two real gaps (items 1-2), then the subtraction PR (item 3),
 after which the roadmap is genuinely done for its purpose. Explicitly still cut:
