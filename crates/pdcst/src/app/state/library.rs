@@ -26,6 +26,17 @@ impl AppState {
             .db
             .get_episodes_for_subscription(subscription_id)
             .await?;
+        // The query returns newest-first; flip to oldest-first for a serial feed
+        // so it reads (and queues) top-to-bottom in publication order.
+        let oldest_first = self
+            .subscriptions
+            .iter()
+            .chain(self.current_subscription.iter())
+            .find(|s| s.id == subscription_id)
+            .is_some_and(|s| s.queue_oldest_first);
+        if oldest_first {
+            self.episodes.reverse();
+        }
         // Keep the right-pane cursor in range after the list changes.
         self.episode_index = self
             .episode_index
@@ -423,6 +434,36 @@ impl AppState {
                 .await?;
             self.set_status(format!("{} - {}", sub.title, label));
             self.load_subscriptions().await?;
+        }
+        Ok(())
+    }
+
+    /// `O`: flip the selected feed's episode order (newest-first <-> oldest-first)
+    /// and re-sort its episode pane immediately.
+    pub async fn toggle_selected_queue_order(&mut self) -> Result<()> {
+        if self.current_view == View::Subscriptions
+            && let Some(sub) = self.subscriptions.get(self.subscription_index).cloned()
+        {
+            let oldest_first = !sub.queue_oldest_first;
+            self.db
+                .update_subscription_queue_order(sub.id, oldest_first)
+                .await?;
+            self.set_status(format!(
+                "{} - order: {}",
+                sub.title,
+                if oldest_first {
+                    "oldest first"
+                } else {
+                    "newest first"
+                }
+            ));
+            self.load_subscriptions().await?;
+            if self.current_subscription.as_ref().map(|s| s.id) == Some(sub.id) {
+                if let Some(cur) = self.current_subscription.as_mut() {
+                    cur.queue_oldest_first = oldest_first;
+                }
+                self.load_episodes_for_subscription(sub.id).await?;
+            }
         }
         Ok(())
     }

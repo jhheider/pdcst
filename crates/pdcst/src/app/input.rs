@@ -324,6 +324,12 @@ impl App {
                         .show_error(format!("Failed to set auto-queue: {}", e));
                 }
             }
+            // Flip the selected feed's episode order (newest <-> oldest first).
+            KeyCode::Char('O') => {
+                if let Err(e) = self.state.toggle_selected_queue_order().await {
+                    self.state.show_error(format!("Failed to set order: {}", e));
+                }
+            }
 
             // Search
             KeyCode::Char('/') => {

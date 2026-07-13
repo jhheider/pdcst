@@ -140,6 +140,32 @@ async fn test_auto_queue_config_roundtrips() {
 }
 
 #[tokio::test]
+async fn queue_order_roundtrips() {
+    let (db, _temp) = create_test_db().await;
+    let sub = create_test_subscription("Serial", "https://example.com/s.xml");
+    db.insert_subscription(&sub).await.unwrap();
+    assert!(
+        !db.get_subscription(sub.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .queue_oldest_first,
+        "defaults to newest-first"
+    );
+    db.update_subscription_queue_order(sub.id, true)
+        .await
+        .unwrap();
+    assert!(
+        db.get_subscription(sub.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .queue_oldest_first,
+        "oldest-first persists"
+    );
+}
+
+#[tokio::test]
 async fn test_get_all_subscriptions() {
     let (db, _temp) = create_test_db().await;
 

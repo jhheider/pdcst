@@ -7,6 +7,27 @@ use rss::Channel;
 
 pub struct FeedParser;
 
+/// Guess whether a feed is best consumed oldest-first (a serial or narrative
+/// series - Revolutions, a history course) rather than newest-first (news /
+/// current affairs). Best-effort from the title and iTunes categories; always
+/// overridable with `O`.
+fn guess_oldest_first(title: &str, categories: &[String]) -> bool {
+    const TITLE_HINTS: &[&str] = &[
+        "history",
+        "story",
+        "stories",
+        "making of",
+        "chronicle",
+        "saga",
+    ];
+    const CATEGORY_HINTS: &[&str] = &["History", "Fiction", "Drama"];
+    let t = title.to_lowercase();
+    TITLE_HINTS.iter().any(|h| t.contains(h))
+        || categories
+            .iter()
+            .any(|c| CATEGORY_HINTS.iter().any(|h| c.eq_ignore_ascii_case(h)))
+}
+
 impl FeedParser {
     pub fn parse_channel(rss_content: &str) -> Result<Channel> {
         Channel::read_from(rss_content.as_bytes()).context("Failed to parse RSS feed")
@@ -58,6 +79,10 @@ impl FeedParser {
                 .map(|cat| cat.text().to_string())
                 .collect();
         }
+
+        // Guess the episode order: serial/narrative feeds are best consumed
+        // oldest-first. Always overridable with `O`.
+        sub.queue_oldest_first = guess_oldest_first(&sub.title, &sub.categories);
 
         sub
     }
@@ -217,6 +242,18 @@ mod tests {
                   href="https://example.com/atom1.mp3"/>
           </entry>
         </feed>"#;
+
+    #[test]
+    fn guesses_oldest_first_for_serials_only() {
+        let g = guess_oldest_first;
+        assert!(g("The History of Rome", &[]), "title keyword");
+        assert!(g("Revolutions", &["History".to_string()]), "category");
+        assert!(
+            !g("Advisory Opinions", &["News".to_string()]),
+            "news is newest-first"
+        );
+        assert!(!g("The Editors", &[]), "default newest-first");
+    }
 
     #[test]
     fn parse_episodes_reads_strict_rss() {
