@@ -46,7 +46,11 @@ impl App {
 
         // Initialize audio player and streamer
         let audio_player = Arc::new(AudioPlayer::new(event_bus.clone())?);
-        let audio_streamer = Arc::new(AudioStreamer::new(config.stream_cache_dir()));
+        let audio_streamer = Arc::new(AudioStreamer::new(
+            config.download_dir.clone(),
+            db.clone(),
+            event_bus.clone(),
+        ));
 
         // Initialize managers
         let queue_manager = Arc::new(QueueManager::new(db.clone(), event_bus.clone()));
@@ -86,7 +90,6 @@ impl App {
             db.clone(),
             download_manager.clone(),
             audio_player.clone(),
-            config.stream_cache_dir(),
             config.max_cache_episodes,
             config.max_cache_megabytes,
         ));

@@ -28,7 +28,11 @@ pub async fn build_state() -> (AppState, TempDir) {
     let event_bus = Arc::new(EventBus::new());
     let services = Services {
         audio_player: Arc::new(AudioPlayer::new(event_bus.clone()).unwrap()),
-        audio_streamer: Arc::new(AudioStreamer::new(config.stream_cache_dir())),
+        audio_streamer: Arc::new(AudioStreamer::new(
+            config.download_dir.clone(),
+            db.clone(),
+            event_bus.clone(),
+        )),
         queue_manager: Arc::new(QueueManager::new(db.clone(), event_bus.clone())),
         download_manager: Arc::new(DownloadManager::new(
             config.download_dir.clone(),

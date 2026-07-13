@@ -1,18 +1,29 @@
-//! Progressive stream-to-disk playback.
+//! Progressive stream-to-disk playback that persists and resumes.
 //!
-//! An episode is downloaded to a temp file while it plays: the download runs in
-//! a background task, and the decoder reads from the same file through a
-//! [`GrowingFile`] that blocks any read running ahead of the downloaded region
-//! until more bytes land. That gives the soonest possible start (play after a
-//! small prebuffer) without ever blocking the UI event loop or holding the
-//! whole episode in memory.
+//! A played episode is downloaded to a **persistent** file in the download
+//! directory (`{id}.{ext}`) while it plays: the download runs in a background
+//! task, and the decoder reads from the same file through a [`GrowingFile`] that
+//! blocks any read ahead of the downloaded region until more bytes land. That
+//! gives the soonest possible start (play after a small prebuffer) without ever
+//! blocking the UI event loop or holding the whole episode in memory.
 //!
-//! Already-downloaded episodes skip all this: they play straight from their
-//! on-disk file (see `AudioPlayer::play_from_file`).
+//! Because the file persists, a later play (this session or after a restart)
+//! **resumes the download** with an HTTP `Range` request from the bytes already
+//! on disk, and the decoder's seek lands in the already-downloaded region - so a
+//! resume jumps straight to your position with no re-buffering from the start.
+//! The file keeps its final name whether partial or complete; the episode's
+//! `Downloaded` status (set once the download finishes) is what distinguishes
+//! them, so there is no rename to race a reader. Once complete the episode plays
+//! straight off disk (`AudioPlayer::play_from_file`) and is managed by normal
+//! download retention.
 
+use crate::app::events::{EventBus, StateEvent};
+use crate::models::DownloadStatus;
+use crate::storage::Database;
 use anyhow::{Context, Result};
 use futures::StreamExt;
-use reqwest::Client;
+use reqwest::header::RANGE;
+use reqwest::{Client, StatusCode};
 use std::fs::File as StdFile;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -66,32 +77,65 @@ impl StreamShared {
     }
 }
 
-/// A handle to a URL being progressively downloaded to a temp file on disk.
+/// A handle to a URL being progressively downloaded to a persistent partial file.
 pub struct DiskStream {
     path: PathBuf,
     shared: Arc<StreamShared>,
 }
 
-impl DiskStream {
-    /// Start downloading `url` to a temp file under `cache_dir`, keyed by
-    /// `episode_id`. Returns immediately; the download runs in a spawned task.
-    fn start(client: Client, url: String, cache_dir: PathBuf, episode_id: Uuid) -> Result<Self> {
-        std::fs::create_dir_all(&cache_dir)
-            .with_context(|| format!("create stream cache dir {}", cache_dir.display()))?;
-        // Best-effort: drop temp files from earlier plays (this run or a prior
-        // one). The file we are about to write is truncated on create anyway.
-        purge_stale(&cache_dir, episode_id);
+/// Everything the completion step needs to mark a finished stream as a real,
+/// retention-managed download.
+struct Promotion {
+    path: PathBuf,
+    episode_id: Uuid,
+    db: Arc<Database>,
+    event_bus: Arc<EventBus>,
+}
 
-        let path = cache_dir.join(format!("stream-{episode_id}.audio"));
+impl DiskStream {
+    /// Begin (or resume) downloading `url` to `download_dir/{episode_id}.{ext}`,
+    /// keyed by `episode_id`. Returns immediately; the download runs in a spawned
+    /// task. If a file is already there (a partial from an earlier play), the
+    /// download resumes from its current size via an HTTP `Range` request. The
+    /// file uses its final name whether partial or complete - the episode's
+    /// `Downloaded` status (set on completion) distinguishes the two, so there is
+    /// no rename to race a reader.
+    fn start(
+        client: Client,
+        url: String,
+        download_dir: PathBuf,
+        episode_id: Uuid,
+        ext: String,
+        db: Arc<Database>,
+        event_bus: Arc<EventBus>,
+    ) -> Result<Self> {
+        std::fs::create_dir_all(&download_dir)
+            .with_context(|| format!("create download dir {}", download_dir.display()))?;
+
+        let path = download_dir.join(format!("{episode_id}.{ext}"));
+        // Resume from whatever is already on disk from an earlier play.
+        let resume_from = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         let shared = Arc::new(StreamShared::new());
 
         let task_shared = shared.clone();
-        let task_path = path.clone();
+        let promo = Promotion {
+            path: path.clone(),
+            episode_id,
+            db,
+            event_bus,
+        };
         tokio::spawn(async move {
-            if let Err(e) = download_to_file(client, &url, &task_path, &task_shared).await {
-                tracing::error!("stream download failed: {e:#}");
-                task_shared.failed.store(true, Ordering::Release);
-                task_shared.notify();
+            match download_resumable(client, &url, &promo.path, resume_from, &task_shared).await {
+                Ok(()) => {
+                    if let Err(e) = mark_downloaded(&promo).await {
+                        tracing::warn!("marking streamed {episode_id} as downloaded failed: {e:#}");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("stream download failed: {e:#}");
+                    task_shared.failed.store(true, Ordering::Release);
+                    task_shared.notify();
+                }
             }
         });
 
@@ -136,35 +180,71 @@ impl DiskStream {
     }
 }
 
-/// Download `url` into `path`, publishing progress through `shared` so a reader
-/// can consume the file as it grows.
-async fn download_to_file(
+/// Download `url` into `path`, resuming from `resume_from` bytes already on disk
+/// via an HTTP `Range` request, and publishing progress through `shared` so a
+/// reader can consume the file as it grows.
+///
+/// Handles the three responses to a range request: `206 Partial Content`
+/// (append), `416 Range Not Satisfiable` (the file is already complete), and a
+/// plain `200` (the server ignored `Range`, so restart from zero - a rare
+/// fallback for a CDN without range support).
+async fn download_resumable(
     client: Client,
     url: &str,
     path: &Path,
+    resume_from: u64,
     shared: &StreamShared,
 ) -> Result<()> {
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?;
-    if !response.status().is_success() {
-        anyhow::bail!("HTTP {} for {}", response.status(), url);
+    let mut req = client.get(url);
+    if resume_from > 0 {
+        req = req.header(RANGE, format!("bytes={resume_from}-"));
     }
-    if let Some(len) = response.content_length() {
-        shared.total.store(len, Ordering::Release);
-    }
+    let response = req.send().await.with_context(|| format!("GET {url}"))?;
+    let status = response.status();
 
     // tokio::fs::File is unbuffered: once write_all returns, the bytes are in the
-    // page cache and visible to the reader's separate fd. So `downloaded` only
+    // page cache and visible to the reader's separate fd, so `downloaded` only
     // advances past bytes a reader can actually read.
-    let mut file = tokio::fs::File::create(path)
-        .await
-        .with_context(|| format!("create {}", path.display()))?;
+    let (mut file, mut written) = if resume_from > 0 && status == StatusCode::PARTIAL_CONTENT {
+        // Server honored the range: append the remainder to what we have.
+        if let Some(remaining) = response.content_length() {
+            shared
+                .total
+                .store(resume_from + remaining, Ordering::Release);
+        }
+        let f = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .await
+            .with_context(|| format!("open {} for append", path.display()))?;
+        (f, resume_from)
+    } else if resume_from > 0 && status == StatusCode::RANGE_NOT_SATISFIABLE {
+        // We already have the whole file.
+        shared.total.store(resume_from, Ordering::Release);
+        shared.downloaded.store(resume_from, Ordering::Release);
+        shared.complete.store(true, Ordering::Release);
+        shared.notify();
+        return Ok(());
+    } else {
+        // Fresh download, or the server ignored `Range` (200): (re)start at zero.
+        if !status.is_success() {
+            anyhow::bail!("HTTP {status} for {url}");
+        }
+        if let Some(len) = response.content_length() {
+            shared.total.store(len, Ordering::Release);
+        }
+        let f = tokio::fs::File::create(path)
+            .await
+            .with_context(|| format!("create {}", path.display()))?;
+        (f, 0)
+    };
+
+    // Publish the resume watermark before the first read so a resuming reader can
+    // immediately consume the region already on disk.
+    shared.downloaded.store(written, Ordering::Release);
+    shared.notify();
 
     let mut stream = response.bytes_stream();
-    let mut written = 0u64;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("read stream chunk")?;
         file.write_all(&chunk).await.context("write stream chunk")?;
@@ -179,36 +259,17 @@ async fn download_to_file(
     Ok(())
 }
 
-/// Delete `stream-*.audio` files from the cache dir, keeping the one keyed by
-/// `keep` (if any). Best-effort: errors (a file still open on Windows, races)
-/// are ignored. On Unix, unlinking a file a reader still holds open is safe.
-fn purge_matching(cache_dir: &Path, keep: Option<Uuid>) {
-    let keep_name = keep.map(|id| format!("stream-{id}.audio"));
-    let Ok(entries) = std::fs::read_dir(cache_dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with("stream-")
-            && name.ends_with(".audio")
-            && keep_name.as_deref() != Some(name.as_ref())
-        {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-}
-
-/// Drop every stream temp file except the one for `keep` (the play about to
-/// start). Called when a new stream begins.
-fn purge_stale(cache_dir: &Path, keep: Uuid) {
-    purge_matching(cache_dir, Some(keep));
-}
-
-/// Drop all stream temp files. Safe at startup, when nothing is streaming;
-/// during a session the per-play [`purge_stale`] keeps the active file.
-pub fn purge_all(cache_dir: &Path) {
-    purge_matching(cache_dir, None);
+/// Mark a fully-downloaded stream as a real download: the file is already at its
+/// final path, so this just records `Downloaded` (with the path) and announces
+/// it. From here the episode plays straight through `play_from_file` and normal
+/// download retention manages the file.
+async fn mark_downloaded(p: &Promotion) -> Result<()> {
+    p.db.update_episode_download_status(p.episode_id, DownloadStatus::Downloaded, Some(&p.path))
+        .await?;
+    p.event_bus.publish(StateEvent::DownloadCompleted {
+        episode_id: p.episode_id,
+    });
+    Ok(())
 }
 
 /// A blocking, seekable reader over a file another task is still appending to.
@@ -309,15 +370,34 @@ impl Seek for GrowingFile {
     }
 }
 
-/// Fetches episode audio for playback: progressive stream-to-disk for remote
-/// URLs. Holds the HTTP client and the temp-file cache directory.
+/// The audio file extension to save a stream under, parsed from the URL path
+/// (before any query) and defaulting to `mp3`. Kept short/alphanumeric so a junk
+/// URL cannot inject a weird filename.
+fn stream_extension(url: &str) -> String {
+    url.split(['?', '#'])
+        .next()
+        .and_then(|p| p.rsplit('/').next())
+        .and_then(|name| name.rsplit_once('.').map(|(_, ext)| ext))
+        .filter(|ext| {
+            !ext.is_empty() && ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric())
+        })
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_else(|| "mp3".to_string())
+}
+
+/// Fetches episode audio for playback: progressive, resumable stream-to-disk for
+/// remote URLs. Persists each play to the download directory so it survives a
+/// restart and a later play resumes it; on completion the episode becomes a
+/// normal download.
 pub struct AudioStreamer {
     client: Client,
-    cache_dir: PathBuf,
+    download_dir: PathBuf,
+    db: Arc<Database>,
+    event_bus: Arc<EventBus>,
 }
 
 impl AudioStreamer {
-    pub fn new(cache_dir: PathBuf) -> Self {
+    pub fn new(download_dir: PathBuf, db: Arc<Database>, event_bus: Arc<EventBus>) -> Self {
         crate::ensure_crypto_provider();
         let client = Client::builder()
             .user_agent("pdcst/0.2")
@@ -328,19 +408,27 @@ impl AudioStreamer {
             .build()
             .expect("Failed to create HTTP client");
 
-        Self { client, cache_dir }
+        Self {
+            client,
+            download_dir,
+            db,
+            event_bus,
+        }
     }
 
-    /// Begin progressively downloading an episode to disk and wait until enough
-    /// is buffered to start playback. Returns a [`GrowingFile`] the decoder
-    /// reads from as the rest streams in.
+    /// Begin (or resume) progressively downloading an episode to disk and wait
+    /// until enough is buffered to start playback. Returns a [`GrowingFile`] the
+    /// decoder reads from as the rest streams in.
     pub async fn open_stream(&self, episode_id: Uuid, url: &str) -> Result<GrowingFile> {
         tracing::info!("Streaming episode to disk from: {}", url);
         let stream = DiskStream::start(
             self.client.clone(),
             url.to_string(),
-            self.cache_dir.clone(),
+            self.download_dir.clone(),
             episode_id,
+            stream_extension(url),
+            self.db.clone(),
+            self.event_bus.clone(),
         )?;
         stream.wait_prebuffer().await?;
         stream.reader()
@@ -350,7 +438,6 @@ impl AudioStreamer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     /// A `GrowingFile` over a fully-downloaded stream reads the whole file and
     /// then reports EOF.
@@ -477,24 +564,10 @@ mod tests {
         assert!(failure.failed(), "reflects a download failure");
     }
 
-    #[test]
-    fn purge_stale_keeps_current_removes_others() {
+    async fn test_db() -> (Arc<Database>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let keep = Uuid::new_v4();
-        let other = Uuid::new_v4();
-        let keep_path = dir.path().join(format!("stream-{keep}.audio"));
-        let other_path = dir.path().join(format!("stream-{other}.audio"));
-        let unrelated = dir.path().join("notes.txt");
-        for p in [&keep_path, &other_path, &unrelated] {
-            let mut f = StdFile::create(p).unwrap();
-            f.write_all(b"x").unwrap();
-        }
-
-        purge_stale(dir.path(), keep);
-
-        assert!(keep_path.exists(), "current episode's file is kept");
-        assert!(!other_path.exists(), "another episode's stream is purged");
-        assert!(unrelated.exists(), "unrelated files are left alone");
+        let db = Database::new(&dir.path().join("t.db")).await.unwrap();
+        (Arc::new(db), dir)
     }
 
     /// The reader must be usable from the audio thread and shareable.
@@ -518,8 +591,8 @@ mod tests {
             .create_async()
             .await;
 
-        let dir = tempfile::tempdir().unwrap();
-        let streamer = AudioStreamer::new(dir.path().to_path_buf());
+        let (db, dir) = test_db().await;
+        let streamer = AudioStreamer::new(dir.path().to_path_buf(), db, Arc::new(EventBus::new()));
         let url = format!("{}/episode.mp3", server.url());
 
         let mut reader = streamer.open_stream(Uuid::new_v4(), &url).await.unwrap();
@@ -537,6 +610,56 @@ mod tests {
         assert_eq!(out, body, "streamed-to-disk bytes match what was served");
     }
 
+    /// A resume opens the existing partial file and range-requests only the
+    /// missing tail, then the reader yields the whole episode (bytes on disk +
+    /// the range-fetched remainder) - no re-buffer from the start.
+    #[tokio::test]
+    async fn open_stream_resumes_partial_via_range() {
+        let mut server = mockito::Server::new_async().await;
+        let body: Vec<u8> = (0..40_000u32).map(|i| i as u8).collect();
+        let resume_from = 12_000usize;
+        let mock = server
+            .mock("GET", "/ep.mp3")
+            .match_header("range", format!("bytes={resume_from}-").as_str())
+            .with_status(206)
+            .with_header(
+                "content-range",
+                &format!("bytes {}-{}/{}", resume_from, body.len() - 1, body.len()),
+            )
+            .with_body(&body[resume_from..])
+            .create_async()
+            .await;
+
+        let (db, dir) = test_db().await;
+        let download_dir = dir.path().join("dl");
+        std::fs::create_dir_all(&download_dir).unwrap();
+        let episode_id = Uuid::new_v4();
+        // Pre-seed the partial at the exact path open_stream will resume.
+        std::fs::write(
+            download_dir.join(format!("{episode_id}.mp3")),
+            &body[..resume_from],
+        )
+        .unwrap();
+
+        let streamer = AudioStreamer::new(download_dir, db, Arc::new(EventBus::new()));
+        let url = format!("{}/ep.mp3", server.url());
+        let mut reader = streamer.open_stream(episode_id, &url).await.unwrap();
+        let out = tokio::task::spawn_blocking(move || {
+            let mut out = Vec::new();
+            reader.read_to_end(&mut out).unwrap();
+            out
+        })
+        .await
+        .unwrap();
+
+        mock.assert_async().await;
+        assert_eq!(out.len(), body.len(), "resume yields the full episode");
+        assert_eq!(
+            out, body,
+            "on-disk prefix + range-fetched tail == full body"
+        );
+    }
+
     /// A stream whose URL 404s surfaces the failure through the prebuffer wait
     /// rather than starting playback on an empty file.
     #[tokio::test]
@@ -548,8 +671,8 @@ mod tests {
             .create_async()
             .await;
 
-        let dir = tempfile::tempdir().unwrap();
-        let streamer = AudioStreamer::new(dir.path().to_path_buf());
+        let (db, dir) = test_db().await;
+        let streamer = AudioStreamer::new(dir.path().to_path_buf(), db, Arc::new(EventBus::new()));
         let url = format!("{}/missing.mp3", server.url());
 
         let result = streamer.open_stream(Uuid::new_v4(), &url).await;

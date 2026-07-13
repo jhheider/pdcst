@@ -13,11 +13,10 @@
 //! periodically, so a session left open for hours or days cannot drift over the
 //! caps.
 
-use crate::audio::{AudioPlayer, stream};
+use crate::audio::AudioPlayer;
 use crate::download::DownloadManager;
 use crate::models::DownloadStatus;
 use crate::storage::Database;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,7 +30,6 @@ pub struct RetentionManager {
     db: Arc<Database>,
     download_manager: Arc<DownloadManager>,
     audio_player: Arc<AudioPlayer>,
-    stream_cache_dir: PathBuf,
     /// Max number of downloaded episodes to keep; 0 = unlimited.
     max_episodes: usize,
     /// Max total bytes of downloaded audio to keep; 0 = unlimited.
@@ -43,7 +41,6 @@ impl RetentionManager {
         db: Arc<Database>,
         download_manager: Arc<DownloadManager>,
         audio_player: Arc<AudioPlayer>,
-        stream_cache_dir: PathBuf,
         max_cache_episodes: usize,
         max_cache_megabytes: u64,
     ) -> Self {
@@ -51,16 +48,15 @@ impl RetentionManager {
             db,
             download_manager,
             audio_player,
-            stream_cache_dir,
             max_episodes: max_cache_episodes,
             max_bytes: max_cache_megabytes.saturating_mul(BYTES_PER_MB),
         }
     }
 
-    /// Startup cleanup: clear stale stream temp files (nothing is streaming yet)
-    /// and bring downloads under the size caps.
+    /// Startup cleanup: bring downloads under the size caps. (Streamed files now
+    /// persist in the download dir as resumable partials and are managed as
+    /// normal downloads, so there is no separate stream cache to purge.)
     pub async fn run_startup(&self) {
-        stream::purge_all(&self.stream_cache_dir);
         self.enforce().await;
     }
 
@@ -188,7 +184,6 @@ mod tests {
             db.clone(),
             download_manager,
             audio_player,
-            dir.path().join("stream-cache"),
             max_episodes,
             max_megabytes,
         );
