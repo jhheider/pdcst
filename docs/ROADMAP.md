@@ -136,12 +136,22 @@ it is foundational.
       starts after a `PREBUFFER_BYTES` (256 KiB) prebuffer - soonest start, no UI
       block, nothing buffered wholesale in memory. Downloaded episodes play
       straight from their file (`AudioPlayer::play_from_file`); remote ones use
-      `play_stream`; both share one generic `start_playback<R: Read + Seek>`. Temp
-      files live under `config.stream_cache_dir()` and are purged as episodes
-      change. Caveat (Jacob's ears): a resume seek into a not-yet-downloaded
-      region waits for the download to reach it. (A mid-stream download failure
-      used to end the episode like a normal completion; fixed - see "What's left"
-      item 1, it now surfaces as a `PlaybackError` with the position kept.)
+      `play_stream`; both share one generic `start_playback<R: Read + Seek>`.
+      (A mid-stream download failure used to end the episode like a normal
+      completion; fixed - see "What's left" item 1, it now surfaces as a
+      `PlaybackError`/`StreamInterrupted` with the position kept.)
+      **Made persistent + resumable later (v0.4.x):** the stream now writes to a
+      persistent `download_dir/{id}.{ext}` instead of a purged temp file. A later
+      play (this session or after restart) resumes the download via an HTTP
+      `Range` request from the bytes already on disk, and the decoder's seek lands
+      in the already-downloaded region - so a resume jumps to your position with
+      no re-buffer from the start (handles 206/416, and 200 as a no-range
+      fallback). On completion the episode is marked `Downloaded`, so it then
+      plays straight off disk and normal retention manages it. This removed the
+      old `stream_cache_dir` + `stream::purge_all` startup wipe. Known follow-up:
+      partial files for episodes started-but-never-finished are not yet
+      retention-counted (they persist until the episode completes or is replayed);
+      a startup reconcile / partial cap can bound that later.
 - [x] **Stage 4 - resume.** Done. `AppState::save_progress` persists the
       per-episode position AND the singleton `playback_state` (episode, rate,
       volume) on the position tick (throttled to `save_position_interval_seconds`,
