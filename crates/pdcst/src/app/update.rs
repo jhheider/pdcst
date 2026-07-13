@@ -21,6 +21,9 @@ impl App {
                 // stream-drop self-heal state - a successful start means we healed.
                 self.state.clear_status();
                 self.state.clear_stream_interruption();
+                // A fresh episode should checkpoint promptly on its first tick,
+                // not wait out the previous episode's throttle window.
+                self.state.last_position_save = None;
                 // Keep current_episode in sync. The manual play path already set
                 // it, but auto-advance plays directly, so load it if it differs.
                 if self.state.current_episode.as_ref().map(|e| e.id) != Some(episode_id)
@@ -46,9 +49,11 @@ impl App {
             }
             PlaybackPosition { position_secs } => {
                 self.state.playback_position = position_secs;
-                // Checkpoint resume position on the 1s tick (fires only while
-                // playing), so a crash or quit loses at most a second.
-                self.state.save_progress().await;
+                // The 1s tick keeps the UI position live, but persisting every
+                // second churns the DB; checkpoint at most every
+                // `save_position_interval_seconds` (default 10). Pause/stop/quit
+                // still save immediately, so this only bounds the crash-loss window.
+                self.state.maybe_checkpoint_progress().await;
             }
             PlaybackError { error } => {
                 tracing::error!("Playback error: {}", error);

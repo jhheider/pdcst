@@ -8,6 +8,18 @@ use uuid::Uuid;
 use super::Database;
 
 impl Database {
+    /// Insert an episode, or - if one with the same `(subscription_id, guid)`
+    /// already exists - refresh only its feed-derived metadata.
+    ///
+    /// Crucially this must NOT be an `INSERT OR REPLACE`: that deletes and
+    /// re-inserts the row, which (a) resets the user-state columns
+    /// (`playback_position_seconds`, `played`, `download_status`, `local_path`)
+    /// to the parsed feed's defaults, wiping resume position and downloads, and
+    /// (b) mints a new `id`, so the delete fires the `playback_state` and queue
+    /// foreign keys - nulling the now-playing episode and dropping queued items.
+    /// Every background refresh re-parses all episodes, so `REPLACE` silently
+    /// erased resume/queue state on the next refresh. The upsert below touches
+    /// only feed metadata and leaves identity + user-state intact.
     pub async fn insert_episode(&self, episode: &Episode) -> Result<()> {
         let local_path = episode
             .local_path
@@ -16,11 +28,19 @@ impl Database {
 
         sqlx::query(
             r#"
-            INSERT OR REPLACE INTO episodes
+            INSERT INTO episodes
             (id, subscription_id, title, description, url, guid, published_at,
              duration_seconds, file_size_bytes, file_type, download_status, local_path,
              playback_position_seconds, played, last_played_at, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(subscription_id, guid) DO UPDATE SET
+                title = excluded.title,
+                description = excluded.description,
+                url = excluded.url,
+                published_at = excluded.published_at,
+                duration_seconds = excluded.duration_seconds,
+                file_size_bytes = excluded.file_size_bytes,
+                file_type = excluded.file_type
             "#,
         )
         .bind(episode.id.to_string())

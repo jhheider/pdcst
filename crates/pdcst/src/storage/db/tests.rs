@@ -289,6 +289,77 @@ async fn test_update_episode_playback_position() {
 }
 
 #[tokio::test]
+async fn refresh_reinsert_preserves_user_state_and_identity() {
+    let (db, _temp) = create_test_db().await;
+    let sub = create_test_subscription("Show", "https://example.com/feed.xml");
+    db.insert_subscription(&sub).await.unwrap();
+
+    // Initial insert, then user-state accrues: resume position, played, download.
+    let ep = create_test_episode(sub.id, "Original title");
+    db.insert_episode(&ep).await.unwrap();
+    db.update_episode_playback_position(ep.id, 942)
+        .await
+        .unwrap();
+    db.mark_episode_played(ep.id, true).await.unwrap();
+    db.update_episode_download_status(
+        ep.id,
+        DownloadStatus::Downloaded,
+        Some(std::path::Path::new("/tmp/ep.mp3")),
+    )
+    .await
+    .unwrap();
+
+    // Mark it now-playing. INSERT OR REPLACE used to delete the episode row on
+    // refresh, tripping the playback_state ON DELETE SET NULL foreign key and
+    // losing the now-playing episode entirely.
+    db.update_playback_state(&PlaybackState {
+        current_episode_id: Some(ep.id),
+        position_seconds: 942.0,
+        volume: 1.0,
+        playback_rate: 1.0,
+        status: PlaybackStatus::Playing,
+    })
+    .await
+    .unwrap();
+
+    // A refresh re-parses the feed: same (subscription_id, guid) but a fresh id,
+    // a metadata change, and default user-state - exactly what INSERT OR REPLACE
+    // used to clobber (position/played/download reset, id changed -> FK nulled).
+    let mut refreshed = create_test_episode(sub.id, "Updated title");
+    refreshed.guid = ep.guid.clone();
+    assert_ne!(refreshed.id, ep.id);
+    db.insert_episode(&refreshed).await.unwrap();
+
+    let eps = db.get_episodes_for_subscription(sub.id).await.unwrap();
+    assert_eq!(eps.len(), 1, "no duplicate row");
+    let got = &eps[0];
+    assert_eq!(
+        got.id, ep.id,
+        "identity preserved (id unchanged across refresh)"
+    );
+    assert_eq!(got.playback_position_seconds, 942, "resume position kept");
+    assert!(got.played, "played flag kept");
+    assert!(
+        matches!(got.download_status, DownloadStatus::Downloaded),
+        "download status kept"
+    );
+    assert_eq!(
+        got.local_path.as_deref(),
+        Some(std::path::Path::new("/tmp/ep.mp3")),
+        "download path kept"
+    );
+    assert_eq!(got.title, "Updated title", "feed metadata refreshed");
+
+    // The now-playing pointer survived the refresh (no row delete -> FK intact).
+    let pstate = db.get_playback_state().await.unwrap();
+    assert_eq!(
+        pstate.current_episode_id,
+        Some(ep.id),
+        "now-playing episode preserved across refresh"
+    );
+}
+
+#[tokio::test]
 async fn test_mark_episode_played() {
     let (db, _temp) = create_test_db().await;
     let sub = create_test_subscription("Test Podcast", "https://example.com/feed.xml");
