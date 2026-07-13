@@ -3,9 +3,13 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    // Storage
+    // Storage. Defaulted like every other field so a hand-written config can omit
+    // them (and the commented default template can leave them out) and still parse.
+    #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
+    #[serde(default = "default_download_dir")]
     pub download_dir: PathBuf,
+    #[serde(default = "default_log_dir")]
     pub log_dir: PathBuf,
 
     // Playback
@@ -43,6 +47,22 @@ pub struct Config {
     pub max_concurrent_refreshes: usize,
     #[serde(default = "default_concurrent_downloads")]
     pub max_concurrent_downloads: usize,
+}
+
+fn default_data_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("pdcst")
+}
+
+fn default_download_dir() -> PathBuf {
+    dirs::download_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Podcasts")
+}
+
+fn default_log_dir() -> PathBuf {
+    default_data_dir().join("logs")
 }
 
 fn default_playback_rate() -> f32 {
@@ -83,18 +103,10 @@ fn default_true() -> bool {
 
 impl Default for Config {
     fn default() -> Self {
-        let data_dir = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("pdcst");
-        let download_dir = dirs::download_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("Podcasts");
-        let log_dir = data_dir.join("logs");
-
         Self {
-            data_dir,
-            download_dir,
-            log_dir,
+            data_dir: default_data_dir(),
+            download_dir: default_download_dir(),
+            log_dir: default_log_dir(),
             default_playback_rate: default_playback_rate(),
             delete_on_finish: true,
             max_cache_episodes: default_max_cache_episodes(),
