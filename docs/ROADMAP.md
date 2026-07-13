@@ -319,8 +319,53 @@ Remaining for a public release (Jacob's calls, not built):
   useful and standalone).
 
 Cosmetic papercuts (deferred): emoji in headers (cross-terminal width),
-per-view footer hints, `Modal::Confirm` is still dead (render + a TODO handler),
-search-box arrow keys seek instead of editing.
+per-view footer hints, search-box arrow keys seek instead of editing.
+(`Modal::Confirm` is no longer dead - the polish pass below wired it for the
+feed-recovery prompt.)
+
+## Polish pass (2026-07-12): the surrounding info/reliability layer
+
+A follow-up pass after daily use against the fixture OPML found the core
+(playback, WSOLA, queueing) solid but the surrounding information/reliability
+layer thin. Brief: jhheider/briefs `pdcst-polish-pass`. All six findings fixed
+(fmt + clippy `-D warnings` + 132 tests green):
+
+- [x] **Feed refresh errors are honest + more feeds parse.** `FeedParser::
+      parse_episodes` tries strict RSS 2.0, then falls back to Atom
+      (`atom_syndication`, which reuses the existing `quick-xml 0.41` - no
+      openssl/aws-lc). A `last_error` column (migration `20250712000002`) records
+      the most recent failure per feed (set on failure, cleared on success); the
+      subscription row shows a red `!` marker + the reason. The per-failure error
+      *modal* is gone (a bulk refresh of dead URLs no longer spams dialogs).
+      **Feed recovery**: `f` on a subscription searches iTunes by title for an
+      up-to-date feed URL and, if it finds a different *title-matching* one,
+      prompts (the now-wired `Modal::Confirm` + a `PendingAction`) to re-point the
+      feed. Confirmed against the fixture: `Constitutionally Speaking`'s retired
+      custom domain recovers to its live simplecast feed. When there's no
+      confident title match, the Search view becomes a **picker** over the
+      candidates (metadata cards: artist / genre / episode count / feed host) so
+      the user chooses one to re-point; only a flat "none" if the search is empty.
+- [x] **Episode cards.** The episode pane renders 2-3 line cards: markers +
+      title, then relative date + duration + a `queued` badge (a per-render
+      `HashSet` of queued ids, no schema change), then a tag-stripped description
+      snippet. All from fields already in the model.
+- [x] **Resume survives abrupt exit.** The 1s autosave tick already covered
+      active playback; this adds a `SIGTERM`/`SIGHUP` handler (Unix) that runs the
+      same save-then-break as the quit key, so `kill` / a closed terminal / an SSH
+      drop still checkpoints. (Ctrl-C is a key event under raw mode, already saved.)
+- [x] **Subscription counts.** `get_all_subscriptions` LEFT JOINs episodes for
+      `episode_count`, `unplayed_count`, and `latest_episode_at` (transient
+      `#[serde(skip)]` fields); the row shows `N new | M eps | <age>`.
+- [x] **Panes, not tabs.** Subscriptions and Episodes are now the two panes of a
+      single **Library** (`1`): left pane live-previews the highlighted feed into
+      the right pane, each pane has its own cursor + scroll + focus border, and
+      `l`/`Enter` and `h`/`Esc` cross between them (Left/Right stay seek). Backing
+      out of a feed returns to the same subscription.
+- [x] **No stray rodio warning on quit.** `log_on_drop(false)` on the device sink.
+
+- [x] **WSOLA re-confirmed perfect in real use** (no action - closes the last
+      open item in the `pure-rust-time-stretch` brief; every gap this pass was in
+      the UI, never the DSP).
 
 ## Cross-cutting constraints (the ethos)
 

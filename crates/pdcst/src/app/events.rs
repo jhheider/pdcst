@@ -69,6 +69,24 @@ pub enum StateEvent {
         error: String,
     },
 
+    // Feed recovery: a title search turned up a different feed URL for a
+    // subscription (usually a failing one whose URL moved), or found nothing new.
+    FeedFixFound {
+        subscription_id: Uuid,
+        podcast_title: String,
+        artist: String,
+        new_url: String,
+    },
+    FeedFixNotFound {
+        subscription_id: Uuid,
+    },
+    /// No confident title match, but the search did return candidates: offer them
+    /// as a picker (the user judges from the metadata and chooses one to re-point).
+    FeedFixCandidates {
+        subscription_id: Uuid,
+        results: Vec<SearchResult>,
+    },
+
     // Search events (delivered off the event loop so the UI never blocks on the
     // network call).
     SearchCompleted {

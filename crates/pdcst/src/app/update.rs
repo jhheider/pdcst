@@ -105,7 +105,62 @@ impl App {
                 error,
             } => {
                 tracing::error!("Refresh failed for {}: {}", subscription_id, error);
-                self.state.show_error(format!("Refresh failed: {}", error));
+                // Do not pop a modal per failure: a bulk refresh of a fixture with
+                // several dead URLs would bury the user in dialogs. The error is
+                // now persisted on the row (set by the refresher) and shown inline
+                // with a `!` marker; just reload so it appears, plus a brief status.
+                let _ = self.state.load_subscriptions().await;
+                self.state
+                    .set_status("A feed failed to refresh (see the ! marker)".to_string());
+            }
+
+            // Feed recovery: a title search found a different feed URL. Stash the
+            // re-point as a pending action and ask before changing anything.
+            FeedFixFound {
+                subscription_id,
+                podcast_title,
+                artist,
+                new_url,
+            } => {
+                self.state.pending_action = Some(crate::app::state::PendingAction::RepointFeed {
+                    subscription_id,
+                    new_url: new_url.clone(),
+                });
+                self.state.modal = crate::app::state::Modal::Confirm {
+                    message: format!(
+                        "Found '{podcast_title}' by {artist}.\nSwitch this feed to:\n{new_url}?"
+                    ),
+                    action: "repoint-feed".to_string(),
+                };
+            }
+            FeedFixNotFound { .. } => {
+                self.state
+                    .set_status("No updated feed found for that title.".to_string());
+            }
+            // No confident match: drop into the Search view as a picker over the
+            // candidates (choosing one re-points this feed instead of subscribing).
+            FeedFixCandidates {
+                subscription_id,
+                results,
+            } => {
+                // Seed the query box with the title so a re-search is one edit away.
+                let title = self
+                    .state
+                    .subscriptions
+                    .iter()
+                    .find(|s| s.id == subscription_id)
+                    .map(|s| s.title.clone())
+                    .unwrap_or_default();
+
+                self.state.set_view(crate::app::state::View::Search);
+                self.state.feed_fix_target = Some(subscription_id);
+                self.state.search_input = title;
+                self.state.search_cursor = self.state.search_input.chars().count();
+                self.state.search_results = results;
+                self.state.focus_search_results();
+                self.state.set_status(
+                    "No exact match - pick a feed to re-point, or edit the search.".to_string(),
+                );
             }
 
             // Background search finished: show the results and move focus to them.

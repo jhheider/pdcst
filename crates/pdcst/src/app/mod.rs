@@ -180,6 +180,11 @@ impl App {
         if self.state.subscriptions.is_empty() {
             self.state.load_subscriptions().await?;
         }
+        // Populate the library's right (Episodes) pane against the first feed, so
+        // it is not blank before the first keypress.
+        if let Err(e) = self.state.preview_selected_subscription().await {
+            tracing::warn!("Failed to preview first subscription: {}", e);
+        }
 
         // Restore the last session's episode (shown, not auto-played).
         if let Err(e) = self.state.restore_playback_state().await {
@@ -199,8 +204,42 @@ impl App {
         // Create ticker for polling keyboard input (non-blocking)
         let mut tick_interval = tokio::time::interval(Duration::from_millis(50));
 
+        // Termination signals (Unix): a `kill`, a closed terminal/tab (SIGHUP),
+        // or an SSH drop ends the process without going through our quit key.
+        // Register them once and route them through the same save-then-break path
+        // so an abrupt exit still checkpoints where we left off. Raw mode swallows
+        // Ctrl-C as a key event (not SIGINT), so SIGINT is handled there already.
+        #[cfg(unix)]
+        let (mut sigterm, mut sighup) = {
+            use tokio::signal::unix::{SignalKind, signal};
+            (
+                signal(SignalKind::terminate())?,
+                signal(SignalKind::hangup())?,
+            )
+        };
+
         loop {
+            // A future that resolves when a termination signal arrives (never, on
+            // non-Unix). Recreated each iteration over the persistent handles;
+            // `recv` is cancel-safe, so losing this branch to another arm is fine.
+            let termination = async {
+                #[cfg(unix)]
+                tokio::select! {
+                    _ = sigterm.recv() => {}
+                    _ = sighup.recv() => {}
+                }
+                #[cfg(not(unix))]
+                std::future::pending::<()>().await;
+            };
+
             tokio::select! {
+                // A termination signal: save and exit gracefully, like the quit key.
+                _ = termination => {
+                    tracing::info!("Received termination signal; saving and exiting");
+                    self.state.save_progress().await;
+                    break;
+                }
+
                 // Handle state events
                 event_result = event_rx.recv() => {
                     match event_result {
