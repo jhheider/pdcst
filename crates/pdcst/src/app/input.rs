@@ -309,6 +309,13 @@ impl App {
                     .state
                     .show_error(format!("Failed to toggle played: {}", e)),
             },
+            // Mark seen (acknowledge without listening): the selected episode in
+            // the Episodes pane, or the whole feed in the Subscriptions pane.
+            KeyCode::Char('S') => {
+                if let Err(e) = self.state.mark_seen().await {
+                    self.state.show_error(format!("Failed to mark seen: {}", e));
+                }
+            }
             // Cycle the selected subscription's auto-queue setting (Subscriptions
             // view): off -> bottom -> top -> off.
             KeyCode::Char('A') => {

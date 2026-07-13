@@ -94,6 +94,7 @@ fn create_test_episode(subscription_id: Uuid, title: &str) -> Episode {
         local_path: None,
         playback_position_seconds: 0,
         played: false,
+        is_new: true,
         last_played_at: None,
         created_at: Utc::now(),
     }
@@ -357,6 +358,56 @@ async fn refresh_reinsert_preserves_user_state_and_identity() {
         Some(ep.id),
         "now-playing episode preserved across refresh"
     );
+}
+
+#[tokio::test]
+async fn mark_seen_clears_new_without_marking_played() {
+    let (db, _temp) = create_test_db().await;
+    let sub = create_test_subscription("Show", "https://example.com/feed.xml");
+    db.insert_subscription(&sub).await.unwrap();
+
+    // Three fresh episodes -> all "new" (as after an OPML import).
+    for t in ["a", "b", "c"] {
+        db.insert_episode(&create_test_episode(sub.id, t))
+            .await
+            .unwrap();
+    }
+    let before = db.get_subscription(sub.id).await.unwrap().unwrap();
+    assert_eq!(before.new_count, 3, "all imported episodes are new");
+
+    // Mark one seen: new drops, but it is NOT played (seen != listened).
+    let one = db.get_episodes_for_subscription(sub.id).await.unwrap()[0].id;
+    db.mark_episode_seen(one).await.unwrap();
+    let got = db.get_episode(one).await.unwrap().unwrap();
+    assert!(!got.is_new, "no longer new");
+    assert!(!got.played, "seen does not mark played");
+    assert_eq!(
+        db.get_subscription(sub.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .new_count,
+        2
+    );
+
+    // Mark the whole feed seen: the backlog clears.
+    let n = db.mark_subscription_seen(sub.id).await.unwrap();
+    assert_eq!(n, 2, "the two still-new episodes were cleared");
+    assert_eq!(
+        db.get_subscription(sub.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .new_count,
+        0
+    );
+
+    // Playing (mark_episode_played) also clears new.
+    let played = db.get_episodes_for_subscription(sub.id).await.unwrap()[1].id;
+    db.mark_subscription_seen(sub.id).await.unwrap(); // reset baseline is 0 already
+    db.mark_episode_played(played, true).await.unwrap();
+    let got = db.get_episode(played).await.unwrap().unwrap();
+    assert!(got.played && !got.is_new, "played implies acknowledged");
 }
 
 #[tokio::test]

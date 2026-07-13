@@ -83,6 +83,10 @@ pub struct Episode {
     pub local_path: Option<PathBuf>,
     pub playback_position_seconds: i64,
     pub played: bool,
+    /// Unacknowledged: true until the episode is played, finished, or explicitly
+    /// marked seen. Drives the subscription "N new" count; distinct from
+    /// `played` (which means listened).
+    pub is_new: bool,
     pub last_played_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
@@ -110,6 +114,7 @@ impl Episode {
             local_path: None,
             playback_position_seconds: 0,
             played: false,
+            is_new: true,
             last_played_at: None,
             created_at: Utc::now(),
         }

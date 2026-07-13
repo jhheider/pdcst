@@ -31,8 +31,8 @@ impl Database {
             INSERT INTO episodes
             (id, subscription_id, title, description, url, guid, published_at,
              duration_seconds, file_size_bytes, file_type, download_status, local_path,
-             playback_position_seconds, played, last_played_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             playback_position_seconds, played, is_new, last_played_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(subscription_id, guid) DO UPDATE SET
                 title = excluded.title,
                 description = excluded.description,
@@ -57,6 +57,7 @@ impl Database {
         .bind(local_path)
         .bind(episode.playback_position_seconds)
         .bind(episode.played)
+        .bind(episode.is_new)
         .bind(episode.last_played_at)
         .bind(episode.created_at)
         .execute(&self.pool)
@@ -73,7 +74,7 @@ impl Database {
             r#"
             SELECT id, subscription_id, title, description, url, guid, published_at,
                    duration_seconds, file_size_bytes, file_type, download_status, local_path,
-                   playback_position_seconds, played, last_played_at, created_at
+                   playback_position_seconds, played, is_new, last_played_at, created_at
             FROM episodes
             WHERE subscription_id = ?
             ORDER BY published_at DESC
@@ -94,7 +95,7 @@ impl Database {
             r#"
             SELECT id, subscription_id, title, description, url, guid, published_at,
                    duration_seconds, file_size_bytes, file_type, download_status, local_path,
-                   playback_position_seconds, played, last_played_at, created_at
+                   playback_position_seconds, played, is_new, last_played_at, created_at
             FROM episodes
             WHERE download_status = ?
             ORDER BY COALESCE(last_played_at, created_at) ASC
@@ -125,7 +126,7 @@ impl Database {
             r#"
             SELECT id, subscription_id, title, description, url, guid, published_at,
                    duration_seconds, file_size_bytes, file_type, download_status, local_path,
-                   playback_position_seconds, played, last_played_at, created_at
+                   playback_position_seconds, played, is_new, last_played_at, created_at
             FROM episodes
             WHERE id = ?
             "#,
@@ -159,12 +160,35 @@ impl Database {
     }
 
     pub async fn mark_episode_played(&self, id: Uuid, played: bool) -> Result<()> {
-        sqlx::query("UPDATE episodes SET played = ? WHERE id = ?")
+        // Marking played also acknowledges the episode (it is no longer "new").
+        sqlx::query("UPDATE episodes SET played = ?, is_new = 0 WHERE id = ?")
             .bind(played)
             .bind(id.to_string())
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Clear the "new" (unacknowledged) flag on a single episode - it has been
+    /// seen. Does not touch `played`, so "seen but not listened" is expressible.
+    pub async fn mark_episode_seen(&self, id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE episodes SET is_new = 0 WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Mark every episode of a subscription seen - the backlog-clearing action
+    /// for a freshly-imported feed (OPML carries no listen history, so all its
+    /// episodes arrive "new"). Returns the number of rows changed.
+    pub async fn mark_subscription_seen(&self, subscription_id: Uuid) -> Result<u64> {
+        let res =
+            sqlx::query("UPDATE episodes SET is_new = 0 WHERE subscription_id = ? AND is_new = 1")
+                .bind(subscription_id.to_string())
+                .execute(&self.pool)
+                .await?;
+        Ok(res.rows_affected())
     }
 
     pub async fn update_episode_download_status(
@@ -208,6 +232,7 @@ impl Database {
                 local_path: local_path.map(|p| p.into()),
                 playback_position_seconds: row.try_get("playback_position_seconds")?,
                 played: row.try_get("played")?,
+                is_new: row.try_get("is_new")?,
                 last_played_at: row.try_get("last_played_at")?,
                 created_at: row.try_get("created_at")?,
             });

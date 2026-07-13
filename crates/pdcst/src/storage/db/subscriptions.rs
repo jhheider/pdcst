@@ -8,14 +8,14 @@ use uuid::Uuid;
 use super::Database;
 
 /// The subscription-list query: every subscription with its joined episode stats
-/// (`episode_count`, `unplayed_count`, `latest_episode_at`), ordered by title.
+/// (`episode_count`, `new_count`, `latest_episode_at`), ordered by title.
 const SELECT_ALL_SUBSCRIPTIONS: &str = r#"
     SELECT s.id, s.title, s.description, s.author, s.rss_url, s.website_url,
            s.artwork_url, s.artwork_path, s.categories, s.auto_queue,
            s.auto_queue_to_top, s.priority, s.auto_download, s.last_refreshed,
            s.created_at, s.last_error,
            COUNT(e.id) AS episode_count,
-           COALESCE(SUM(CASE WHEN e.played = 0 THEN 1 ELSE 0 END), 0) AS unplayed_count,
+           COALESCE(SUM(CASE WHEN e.is_new = 1 AND e.played = 0 THEN 1 ELSE 0 END), 0) AS new_count,
            MAX(e.published_at) AS latest_episode_at
     FROM subscriptions s
     LEFT JOIN episodes e ON e.subscription_id = s.id
@@ -30,7 +30,7 @@ const SELECT_ONE_SUBSCRIPTION: &str = r#"
            s.auto_queue_to_top, s.priority, s.auto_download, s.last_refreshed,
            s.created_at, s.last_error,
            COUNT(e.id) AS episode_count,
-           COALESCE(SUM(CASE WHEN e.played = 0 THEN 1 ELSE 0 END), 0) AS unplayed_count,
+           COALESCE(SUM(CASE WHEN e.is_new = 1 AND e.played = 0 THEN 1 ELSE 0 END), 0) AS new_count,
            MAX(e.published_at) AS latest_episode_at
     FROM subscriptions s
     LEFT JOIN episodes e ON e.subscription_id = s.id
@@ -61,7 +61,7 @@ fn row_to_subscription(row: &SqliteRow) -> Result<Subscription> {
         created_at: row.try_get("created_at")?,
         last_error: row.try_get("last_error")?,
         episode_count: row.try_get("episode_count")?,
-        unplayed_count: row.try_get("unplayed_count")?,
+        new_count: row.try_get("new_count")?,
         latest_episode_at: row.try_get::<Option<DateTime<Utc>>, _>("latest_episode_at")?,
     })
 }
