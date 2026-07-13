@@ -93,6 +93,18 @@ pub enum Modal {
     Confirm { message: String, action: String },
 }
 
+/// An action awaiting the user's confirmation in a [`Modal::Confirm`]. Carried
+/// separately from the modal's display text so the Enter handler has the typed
+/// payload it needs to execute (the modal itself only renders a message).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PendingAction {
+    /// Re-point a failing/moved subscription at a feed URL found by title search.
+    RepointFeed {
+        subscription_id: uuid::Uuid,
+        new_url: String,
+    },
+}
+
 pub struct AppState {
     pub config: Config,
     pub db: Arc<Database>,
@@ -107,15 +119,33 @@ pub struct AppState {
 
     // UI state
     pub current_view: View,
+    /// Cursor for the Queue and Search lists (the single-list views). The
+    /// two-pane library keeps its own per-pane cursors below, because both panes
+    /// are on screen at once and each scrolls independently.
     pub selected_index: usize,
-    /// Scroll/selection state for the current list view. Reused across frames so
-    /// ratatui keeps the selected row on screen; reset when the view changes.
+    /// Scroll/selection state for the current single-list view (Queue/Search).
+    /// Reused across frames so ratatui keeps the selected row on screen; reset
+    /// when the view changes.
     pub list_state: ListState,
+    /// Left-pane (Subscriptions) cursor in the two-pane library. Persists while
+    /// the right pane is focused, so drilling into a feed and backing out returns
+    /// to the same subscription.
+    pub subscription_index: usize,
+    /// Right-pane (Episodes) cursor in the two-pane library.
+    pub episode_index: usize,
+    pub subscription_list_state: ListState,
+    pub episode_list_state: ListState,
     pub modal: Modal,
+    /// The action a `Modal::Confirm` will run on Enter (cleared on Esc/close).
+    pub pending_action: Option<PendingAction>,
     pub search_input: String,
     pub search_cursor: usize,
     /// Whether keystrokes go to the query box or the results list.
     pub search_focus: SearchFocus,
+    /// When set, the Search view is a feed-recovery *picker* for this
+    /// subscription: choosing a result re-points that feed rather than adding a
+    /// new subscription. `None` is an ordinary search.
+    pub feed_fix_target: Option<uuid::Uuid>,
     pub status_message: Option<StatusMessage>,
     pub show_help: bool,
     /// Set by the quit key; the run loop checks it and exits.
@@ -208,10 +238,16 @@ impl AppState {
             current_view: View::Subscriptions,
             selected_index: 0,
             list_state: ListState::default(),
+            subscription_index: 0,
+            episode_index: 0,
+            subscription_list_state: ListState::default(),
+            episode_list_state: ListState::default(),
             modal: Modal::None,
+            pending_action: None,
             search_input: String::new(),
             search_cursor: 0,
             search_focus: SearchFocus::Input,
+            feed_fix_target: None,
             status_message: None,
             show_help: false,
             should_quit: false,
@@ -247,6 +283,8 @@ impl AppState {
     // Search mode methods (placeholders for future UI state)
 
     pub fn enter_search_mode(&mut self) {
+        // A fresh search is a normal search, not a feed-recovery picker.
+        self.feed_fix_target = None;
         self.set_view(View::Search);
         tracing::debug!("Entered search mode");
     }
@@ -255,6 +293,8 @@ impl AppState {
         if self.current_view == View::Search {
             self.set_view(View::Subscriptions);
         }
+        // Leaving Search abandons any in-progress feed re-point.
+        self.feed_fix_target = None;
         tracing::debug!("Exited search mode");
     }
 
@@ -270,6 +310,8 @@ impl AppState {
 
     pub fn close_modal(&mut self) {
         self.modal = Modal::None;
+        // Dismissing a confirm dialog abandons its pending action.
+        self.pending_action = None;
     }
 
     /// Show a transient status message that auto-clears after [`STATUS_TTL`].

@@ -222,7 +222,7 @@ async fn cycle_auto_queue_off_bottom_top_off() {
     state.db.insert_subscription(&sub).await.unwrap();
     state.load_subscriptions().await.unwrap();
     state.set_view(View::Subscriptions);
-    state.selected_index = 0;
+    state.subscription_index = 0;
 
     // off -> bottom
     state.cycle_selected_auto_queue().await.unwrap();
@@ -299,7 +299,7 @@ async fn add_to_queue_only_acts_in_episodes() {
 
     // Episodes view: acts, reports true.
     state.set_view(View::Episodes);
-    state.selected_index = 0;
+    state.episode_index = 0;
     assert!(state.add_selected_to_queue().await.unwrap());
     assert_eq!(state.db.get_queue().await.unwrap().len(), 1);
 }
@@ -314,7 +314,7 @@ async fn unsubscribe_removes_feed_and_episodes() {
     state.db.insert_episode(&ep).await.unwrap();
     state.load_subscriptions().await.unwrap();
     state.set_view(View::Subscriptions);
-    state.selected_index = 0;
+    state.subscription_index = 0;
 
     assert!(state.unsubscribe_selected().await.unwrap());
     assert!(state.db.get_subscription(sub.id).await.unwrap().is_none());

@@ -56,6 +56,21 @@ pub struct Subscription {
     pub auto_download: bool,
     pub last_refreshed: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    /// The most recent refresh failure, or `None` if the last refresh succeeded
+    /// (or none has run). Surfaced in the subscription row so a dead URL or an
+    /// unparseable feed is visible at a glance, not just in a passing status.
+    #[serde(default)]
+    pub last_error: Option<String>,
+
+    // Aggregate stats, computed by a join at load time (see
+    // `get_all_subscriptions`), not stored on the row. Skipped in (de)serialize
+    // so OPML round-trips and the DB insert ignore them; default to zero/None.
+    #[serde(skip)]
+    pub episode_count: i64,
+    #[serde(skip)]
+    pub unplayed_count: i64,
+    #[serde(skip)]
+    pub latest_episode_at: Option<DateTime<Utc>>,
 }
 
 impl Subscription {
@@ -77,6 +92,10 @@ impl Subscription {
             auto_download: false,
             last_refreshed: now,
             created_at: now,
+            last_error: None,
+            episode_count: 0,
+            unplayed_count: 0,
+            latest_episode_at: None,
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::app::{AppState, state::Modal, state::SearchFocus, state::View};
 use crate::models::Episode;
-use crate::utils::time::format_duration;
+use crate::utils::time::{format_duration, format_relative_time};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -8,11 +8,38 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Wrap},
 };
+use std::collections::HashSet;
+use uuid::Uuid;
 
 /// Selected-row style: reverse video, so it reads correctly on any terminal
 /// theme (light or dark) rather than assuming a dark background.
 fn selection_style() -> Style {
     Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+}
+
+/// Border colour for a pane: cyan when it holds keyboard focus, dim otherwise,
+/// so it is always obvious which pane the keys drive.
+fn pane_border(focused: bool) -> Color {
+    if focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    }
+}
+
+/// The host of a feed URL (e.g. `feeds.simplecast.com`), for the search-result
+/// metadata line - a moved feed is often recognisable by where it now lives.
+/// Returns `None` for a URL without a clear host.
+fn feed_host(url: &str) -> Option<String> {
+    let after_scheme = url.split("://").nth(1).unwrap_or(url);
+    let host = after_scheme.split('/').next().unwrap_or("");
+    let host = host.split('@').next_back().unwrap_or(host); // drop any userinfo
+    let host = host.split(':').next().unwrap_or(host); // drop any port
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
 }
 
 /// A one-character listen-state marker for an episode row: played, in-progress
@@ -24,6 +51,43 @@ fn listen_marker(ep: &Episode) -> &'static str {
         "~"
     } else {
         " "
+    }
+}
+
+/// A one-line, tag-stripped preview of an episode description for the card's
+/// third line. HTML tags and collapsed whitespace are removed; the result is
+/// truncated to `max` characters. Returns an empty string when there's nothing
+/// worth showing.
+fn description_snippet(desc: &str, max: usize) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    let mut last_was_space = false;
+    for c in desc.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if in_tag => {}
+            c if c.is_whitespace() => {
+                if !last_was_space && !out.is_empty() {
+                    out.push(' ');
+                    last_was_space = true;
+                }
+            }
+            c => {
+                out.push(c);
+                last_was_space = false;
+            }
+        }
+        if out.chars().count() >= max {
+            break;
+        }
+    }
+    let trimmed = out.trim_end();
+    if trimmed.chars().count() >= max {
+        let kept: String = trimmed.chars().take(max.saturating_sub(3)).collect();
+        format!("{kept}...")
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -47,10 +111,11 @@ impl Ui {
         // Render header
         self.render_header(f, chunks[0], state);
 
-        // Render main content based on view
+        // Render main content based on view. Subscriptions and Episodes are the
+        // two panes of the library and are drawn together (which pane is focused
+        // is `current_view`); the other views take the full width.
         match state.current_view {
-            View::Subscriptions => self.render_subscriptions(f, chunks[1], state),
-            View::Episodes => self.render_episodes(f, chunks[1], state),
+            View::Subscriptions | View::Episodes => self.render_library(f, chunks[1], state),
             View::Queue => self.render_queue(f, chunks[1], state),
             View::Search => self.render_search(f, chunks[1], state),
             View::Settings => self.render_settings(f, chunks[1], state),
@@ -72,8 +137,7 @@ impl Ui {
 
     fn render_header(&self, f: &mut Frame, area: Rect, state: &AppState) {
         let view_name = match state.current_view {
-            View::Subscriptions => "📻 Subscriptions",
-            View::Episodes => "🎙️  Episodes",
+            View::Subscriptions | View::Episodes => "📚 Library",
             View::Queue => "📋 Queue",
             View::Search => "🔍 Search",
             View::Settings => "⚙️  Settings",
@@ -97,25 +161,52 @@ impl Ui {
         f.render_widget(header, area);
     }
 
-    fn render_subscriptions(&self, f: &mut Frame, area: Rect, state: &mut AppState) {
-        // First-run guidance: an empty Subscriptions view is the literal fresh
-        // install, so point at the two ways to add a podcast.
+    /// The library: Subscriptions (left) and Episodes (right) side by side, so a
+    /// wide terminal shows the feed you are browsing and its episodes at once.
+    /// `current_view` picks which pane has focus (and the reverse-video cursor);
+    /// the left pane live-previews the highlighted feed into the right one.
+    fn render_library(&self, f: &mut Frame, area: Rect, state: &mut AppState) {
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+            .split(area);
+
+        let subs_focused = state.current_view == View::Subscriptions;
+        self.render_subscriptions_pane(f, panes[0], state, subs_focused);
+        self.render_episodes_pane(f, panes[1], state, !subs_focused);
+    }
+
+    fn render_subscriptions_pane(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        state: &mut AppState,
+        focused: bool,
+    ) {
+        let border = pane_border(focused);
+
+        // First-run guidance: an empty list is the literal fresh install, so
+        // point at the two ways to add a podcast.
         if state.subscriptions.is_empty() {
             let empty = Paragraph::new(vec![
                 Line::from(""),
                 Line::from("No podcasts yet."),
                 Line::from(""),
-                Line::from("Press '/' to search and subscribe,"),
-                Line::from("or import an OPML file with --import <file>."),
+                Line::from("Press '/' to search"),
+                Line::from("and subscribe, or"),
+                Line::from("import an OPML file"),
+                Line::from("with --import <file>."),
                 Line::from(""),
-                Line::from("Then press 'A' on a feed to auto-fill Up Next."),
+                Line::from("Then press 'A' on a"),
+                Line::from("feed to auto-fill"),
+                Line::from("Up Next."),
             ])
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::White))
+                    .border_style(Style::default().fg(border))
                     .title(" Subscriptions (0) ")
                     .title_style(
                         Style::default()
@@ -127,26 +218,54 @@ impl Ui {
             return;
         }
 
+        let current_id = state.current_subscription.as_ref().map(|s| s.id);
         let items: Vec<ListItem> = state
             .subscriptions
             .iter()
             .map(|sub| {
-                let icon = if state
-                    .current_subscription
-                    .as_ref()
-                    .is_some_and(|s| s.id == sub.id)
-                {
-                    "> "
-                } else {
-                    "  "
-                };
+                let cur = if current_id == Some(sub.id) { ">" } else { " " };
                 // Auto-queue indicator: Qv = add to bottom, Q^ = add to top.
                 let aq = match (sub.auto_queue, sub.auto_queue_to_top) {
-                    (false, _) => "   ",
-                    (true, false) => "Qv ",
-                    (true, true) => "Q^ ",
+                    (false, _) => "  ",
+                    (true, false) => "Qv",
+                    (true, true) => "Q^",
                 };
-                ListItem::new(format!("{}{}{}", icon, aq, sub.title))
+                let has_error = sub.last_error.is_some();
+                let err_mark = if has_error { "!" } else { " " };
+
+                // Line 1: markers + title. A failing feed's title is dimmed and
+                // its `!` is red, so a dead/unparseable feed reads at a glance.
+                let title_style = if has_error {
+                    Style::default().fg(Color::Gray)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                let line1 = Line::from(vec![
+                    Span::styled(format!("{cur}{aq}"), Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        format!("{err_mark} "),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(sub.title.clone(), title_style),
+                ]);
+
+                // Line 2: the error (if any), else the counts + newest-episode age
+                // (all already in the model - see get_all_subscriptions).
+                let line2 = if let Some(err) = &sub.last_error {
+                    Line::from(Span::styled(
+                        format!("   {err}"),
+                        Style::default().fg(Color::Red),
+                    ))
+                } else {
+                    let mut detail =
+                        format!("   {} new | {} eps", sub.unplayed_count, sub.episode_count);
+                    if let Some(latest) = &sub.latest_episode_at {
+                        detail.push_str(&format!(" | {}", format_relative_time(latest)));
+                    }
+                    Line::from(Span::styled(detail, Style::default().fg(Color::DarkGray)))
+                };
+
+                ListItem::new(vec![line1, line2])
             })
             .collect();
 
@@ -154,7 +273,7 @@ impl Ui {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::White))
+                    .border_style(Style::default().fg(border))
                     .title(format!(" Subscriptions ({}) ", state.subscriptions.len()))
                     .title_style(
                         Style::default()
@@ -164,11 +283,12 @@ impl Ui {
             )
             .highlight_style(selection_style());
 
-        state.sync_list_selection();
-        f.render_stateful_widget(list, area, &mut state.list_state);
+        state.sync_subscription_selection();
+        f.render_stateful_widget(list, area, &mut state.subscription_list_state);
     }
 
-    fn render_episodes(&self, f: &mut Frame, area: Rect, state: &mut AppState) {
+    fn render_episodes_pane(&self, f: &mut Frame, area: Rect, state: &mut AppState, focused: bool) {
+        let border = pane_border(focused);
         let title = state
             .current_subscription
             .as_ref()
@@ -181,7 +301,7 @@ impl Ui {
             let hint = if state.current_subscription.is_some() {
                 "No episodes yet. Press 'r' to refresh this feed."
             } else {
-                "Select a podcast (Enter) to see its episodes."
+                "Select a podcast to see its episodes."
             };
             let empty = Paragraph::new(vec![Line::from(""), Line::from(hint)])
                 .style(Style::default().fg(Color::Gray))
@@ -189,7 +309,7 @@ impl Ui {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::White))
+                        .border_style(Style::default().fg(border))
                         .title(format!(" {} (0) ", title))
                         .title_style(
                             Style::default()
@@ -202,17 +322,21 @@ impl Ui {
         }
 
         let playing_id = state.current_episode.as_ref().map(|e| e.id);
+        // Queue membership is a UI cross-reference (no flag on Episode): build the
+        // set of queued ids once per render rather than scanning per row.
+        let queued: HashSet<Uuid> = state.queue_items.iter().map(|e| e.id).collect();
 
         let items: Vec<ListItem> = state
             .episodes
             .iter()
             .map(|ep| {
                 // Dim finished episodes so the unheard ones stand out.
-                let base = if ep.played {
+                let title_style = if ep.played {
                     Style::default().fg(Color::DarkGray)
                 } else {
                     Style::default().fg(Color::White)
                 };
+                let dim = Style::default().fg(Color::DarkGray);
 
                 let now = if playing_id == Some(ep.id) { ">" } else { " " };
                 let listen = listen_marker(ep);
@@ -223,15 +347,34 @@ impl Ui {
                     crate::models::DownloadStatus::NotDownloaded => " ",
                 };
 
-                let text = format!(
-                    "{}{} {} {} | {}",
-                    now,
-                    listen,
-                    download_icon,
-                    ep.title,
+                // Line 1: state markers + title.
+                let line1 = Line::from(vec![
+                    Span::styled(format!("{now}{listen} {download_icon} "), Style::default()),
+                    Span::styled(ep.title.clone(), title_style),
+                ]);
+
+                // Line 2: newest-first date, duration, and a queue badge - the
+                // fields already in the model that a one-line row had no room for.
+                let mut meta = format!(
+                    "   {} | {}",
+                    format_relative_time(&ep.published_at),
                     ep.duration_formatted()
                 );
-                ListItem::new(text).style(base)
+                if queued.contains(&ep.id) {
+                    meta.push_str(" | queued");
+                }
+                let line2 = Line::from(Span::styled(meta, dim));
+
+                // Line 3: a one-line description snippet, if there is one.
+                let mut lines = vec![line1, line2];
+                if let Some(desc) = &ep.description {
+                    let snippet = description_snippet(desc, 70);
+                    if !snippet.is_empty() {
+                        lines.push(Line::from(Span::styled(format!("   {snippet}"), dim)));
+                    }
+                }
+
+                ListItem::new(lines)
             })
             .collect();
 
@@ -239,7 +382,7 @@ impl Ui {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::White))
+                    .border_style(Style::default().fg(border))
                     .title(format!(" {} ({}) ", title, state.episodes.len()))
                     .title_style(
                         Style::default()
@@ -249,8 +392,8 @@ impl Ui {
             )
             .highlight_style(selection_style());
 
-        state.sync_list_selection();
-        f.render_stateful_widget(list, area, &mut state.list_state);
+        state.sync_episode_selection();
+        f.render_stateful_widget(list, area, &mut state.episode_list_state);
     }
 
     fn render_queue(&self, f: &mut Frame, area: Rect, state: &mut AppState) {
@@ -334,6 +477,15 @@ impl Ui {
             Color::DarkGray
         };
 
+        // In feed-recovery mode the same box is a picker: title it so, and a
+        // chosen result re-points the feed rather than adding a subscription.
+        let fixing = state.feed_fix_target.is_some();
+        let input_title = if fixing {
+            " Pick a feed to re-point (iTunes) "
+        } else {
+            " Search Podcasts (iTunes) "
+        };
+
         // Search input box
         let input = Paragraph::new(state.search_input.as_str())
             .style(Style::default().fg(Color::Yellow))
@@ -341,7 +493,7 @@ impl Ui {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(input_border))
-                    .title(" Search Podcasts (iTunes) ")
+                    .title(input_title)
                     .title_style(
                         Style::default()
                             .fg(input_border)
@@ -390,10 +542,37 @@ impl Ui {
 
             f.render_widget(empty_msg, chunks[1]);
         } else {
+            let dim = Style::default().fg(Color::DarkGray);
             let items: Vec<ListItem> = state
                 .search_results
                 .iter()
-                .map(|result| ListItem::new(format!("{} - {}", result.title, result.artist)))
+                .map(|result| {
+                    // Card: title, then the metadata that helps tell shows apart -
+                    // artist, genre, episode count, and the feed's host (so a
+                    // moved feed is recognisable by where it now lives).
+                    let mut meta_parts: Vec<String> = Vec::new();
+                    if !result.artist.is_empty() {
+                        meta_parts.push(result.artist.clone());
+                    }
+                    if let Some(genre) = &result.genre {
+                        meta_parts.push(genre.clone());
+                    }
+                    if let Some(n) = result.track_count {
+                        meta_parts.push(format!("{n} eps"));
+                    }
+                    if let Some(host) = feed_host(&result.feed_url) {
+                        meta_parts.push(host);
+                    }
+                    let meta = format!("   {}", meta_parts.join(" | "));
+
+                    ListItem::new(vec![
+                        Line::from(Span::styled(
+                            result.title.clone(),
+                            Style::default().fg(Color::White),
+                        )),
+                        Line::from(Span::styled(meta, dim)),
+                    ])
+                })
                 .collect();
 
             let results_border = if input_focused {
@@ -401,13 +580,18 @@ impl Ui {
             } else {
                 Color::Cyan
             };
+            let action = if fixing {
+                "Enter to re-point"
+            } else {
+                "Enter to subscribe"
+            };
             let list = List::new(items)
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(results_border))
                         .title(format!(
-                            " Results ({}) - Enter to subscribe ",
+                            " Results ({}) - {action} ",
                             state.search_results.len()
                         ))
                         .title_style(
@@ -585,9 +769,14 @@ impl Ui {
         // so features like the auto-queue toggle ([A]) are discoverable without
         // opening Help. A common tail carries the always-available keys.
         let view_hint = match state.current_view {
-            View::Subscriptions => "[Enter] Open  [A] Auto-queue  [r] Refresh  [u] Unsub",
-            View::Episodes => "[Enter] Play  [a] Queue  [d] Download  [s] Played",
+            View::Subscriptions => {
+                "[l/Enter] Episodes  [A] Auto-queue  [r] Refresh  [f] Fix feed  [u] Unsub"
+            }
+            View::Episodes => "[Enter] Play  [h/Esc] Back  [a] Queue  [d] Download  [s] Played",
             View::Queue => "[Enter] Play  [x] Remove  [n] Skip",
+            View::Search if state.feed_fix_target.is_some() => {
+                "type to search  [Enter] Re-point feed  [Esc] Cancel"
+            }
             View::Search => "type to search  [Enter] Search/Subscribe  [Esc] Back",
             View::Settings => "config via --config <file>",
         };
@@ -643,14 +832,14 @@ impl Ui {
             Line::from("  PgUp/PgDn Page up/down"),
             Line::from(""),
             Line::from(Span::styled("Views:", Style::default().fg(Color::Cyan))),
-            Line::from("  1        Subscriptions"),
+            Line::from("  1        Library (feeds | episodes)"),
             Line::from("  2        Queue"),
             Line::from("  3        Search"),
             Line::from("  4        Settings"),
             Line::from("  Tab      Next view"),
             Line::from("  Shift+Tab Previous view"),
-            Line::from("  Enter    Open podcast (episodes)"),
-            Line::from("  Esc      Back to subscriptions"),
+            Line::from("  l/Enter  Feeds -> episodes pane"),
+            Line::from("  h/Esc    Episodes -> feeds pane"),
             Line::from(""),
             Line::from(Span::styled("Playback:", Style::default().fg(Color::Cyan))),
             Line::from("  Space    Play/Pause"),
@@ -668,6 +857,7 @@ impl Ui {
             Line::from("  x        Remove (queue) / delete download"),
             Line::from("  r        Refresh feed"),
             Line::from("  R        Refresh all"),
+            Line::from("  f        Fix feed (find moved URL)"),
             Line::from("  s        Toggle played"),
             Line::from("  A        Cycle auto-queue (off/bottom/top)"),
             Line::from("  u        Unsubscribe (subscriptions)"),
@@ -737,9 +927,9 @@ impl Ui {
     }
 
     fn render_confirm_modal(&self, f: &mut Frame, area: Rect, message: &str, _action: &str) {
-        let popup_area = centered_rect(50, 20, area);
+        let popup_area = centered_rect(70, 30, area);
 
-        let confirm_text = vec![
+        let mut confirm_text = vec![
             Line::from(""),
             Line::from(Span::styled(
                 "⚠️  Confirm",
@@ -748,13 +938,17 @@ impl Ui {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
-            Line::from(message),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Press Enter to confirm, Esc to cancel",
-                Style::default().fg(Color::Gray),
-            )),
         ];
+        // The message may be multi-line (e.g. a feed re-point shows the old ->
+        // new URL); render each line rather than collapsing them.
+        for line in message.lines() {
+            confirm_text.push(Line::from(line.to_string()));
+        }
+        confirm_text.push(Line::from(""));
+        confirm_text.push(Line::from(Span::styled(
+            "Press Enter to confirm, Esc to cancel",
+            Style::default().fg(Color::Gray),
+        )));
 
         let confirm_widget = Paragraph::new(confirm_text)
             .block(
@@ -801,4 +995,41 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{description_snippet, feed_host};
+
+    #[test]
+    fn feed_host_extracts_the_domain() {
+        assert_eq!(
+            feed_host("https://feeds.simplecast.com/H1YsStlE").as_deref(),
+            Some("feeds.simplecast.com")
+        );
+        assert_eq!(
+            feed_host("http://rss.buzzsprout.com:8080/2506785.rss").as_deref(),
+            Some("rss.buzzsprout.com")
+        );
+        assert_eq!(feed_host("").as_deref(), None);
+    }
+
+    #[test]
+    fn snippet_strips_tags_and_collapses_whitespace() {
+        let html = "<p>Hello   <b>there</b>,\n  world</p>";
+        assert_eq!(description_snippet(html, 100), "Hello there, world");
+    }
+
+    #[test]
+    fn snippet_truncates_with_ellipsis() {
+        let long = "abcdefghijklmnopqrstuvwxyz";
+        let out = description_snippet(long, 10);
+        assert_eq!(out.chars().count(), 10);
+        assert!(out.ends_with("..."));
+    }
+
+    #[test]
+    fn snippet_empty_for_tags_only() {
+        assert_eq!(description_snippet("<br/><hr/>", 50), "");
+    }
 }

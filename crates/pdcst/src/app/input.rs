@@ -24,8 +24,11 @@ impl App {
             Modal::Confirm { .. } => {
                 match key {
                     KeyCode::Enter => {
-                        // TODO: Execute confirmed action
-                        self.state.close_modal();
+                        // Run the stashed action (e.g. re-point a feed), which
+                        // also closes the modal and clears the pending action.
+                        if let Err(e) = self.state.apply_pending_action().await {
+                            self.state.show_error(format!("Action failed: {}", e));
+                        }
                         return Ok(());
                     }
                     KeyCode::Esc => {
@@ -95,8 +98,24 @@ impl App {
                         self.state.exit_search_mode();
                     }
                 } else if self.state.current_view == View::Episodes {
-                    self.state.set_view(View::Subscriptions);
+                    // Back out of the episode pane to the feed you drilled into
+                    // (keeping the left-pane cursor there).
+                    self.state.focus_subscriptions();
                 }
+                return Ok(());
+            }
+
+            // Ranger-style pane movement in the two-pane library: l/h (or, where
+            // they don't collide with seeking, they stay vim keys) cross between
+            // the Subscriptions and Episodes panes. Enter/Esc still work too.
+            KeyCode::Char('l') if self.state.current_view == View::Subscriptions => {
+                if let Err(e) = self.state.select_item().await {
+                    self.state.show_error(format!("Selection failed: {}", e));
+                }
+                return Ok(());
+            }
+            KeyCode::Char('h') if self.state.current_view == View::Episodes => {
+                self.state.focus_subscriptions();
                 return Ok(());
             }
 
@@ -168,14 +187,12 @@ impl App {
                 }
             }
 
-            // View navigation
+            // View navigation (set_view resets the target view's own cursor).
             KeyCode::Char('1') => {
                 self.state.set_view(View::Subscriptions);
-                self.state.selected_index = 0;
             }
             KeyCode::Char('2') => {
                 self.state.set_view(View::Queue);
-                self.state.selected_index = 0;
                 // Load queue items
                 if let Err(e) = self.state.load_queue().await {
                     self.state
@@ -184,16 +201,15 @@ impl App {
             }
             KeyCode::Char('3') => {
                 self.state.set_view(View::Search);
-                self.state.selected_index = 0;
                 self.state.clear_search_input();
+                // A direct jump to Search is a normal search, not a fix picker.
+                self.state.feed_fix_target = None;
             }
             KeyCode::Char('4') => {
                 self.state.set_view(View::Settings);
-                self.state.selected_index = 0;
             }
             KeyCode::Tab => {
                 self.state.next_view();
-                self.state.selected_index = 0;
                 // Load data for new view
                 if self.state.current_view == View::Queue {
                     let _ = self.state.load_queue().await;
@@ -201,7 +217,6 @@ impl App {
             }
             KeyCode::BackTab => {
                 self.state.previous_view();
-                self.state.selected_index = 0;
                 // Load data for new view
                 if self.state.current_view == View::Queue {
                     let _ = self.state.load_queue().await;
@@ -281,6 +296,12 @@ impl App {
             KeyCode::Char('R') => {
                 self.state.refresh_all_subscriptions();
             }
+            // Find an updated feed URL for the selected subscription (title
+            // search), then prompt to switch. The recovery path for a feed whose
+            // URL moved - the '!' rows in the Subscriptions pane.
+            KeyCode::Char('f') => {
+                self.state.find_feed_fix();
+            }
             KeyCode::Char('s') => match self.state.toggle_played_status().await {
                 Ok(true) => self.state.set_status("Toggled played status".to_string()),
                 Ok(false) => {}
@@ -303,6 +324,15 @@ impl App {
             }
 
             _ => {}
+        }
+
+        // Two-pane library: keep the right (Episodes) pane in sync with the
+        // highlighted feed. Cheap and idempotent - it reloads only when the
+        // left-pane cursor now points at a different subscription than the one
+        // shown, so calling it after any key while the left pane is focused is a
+        // no-op unless the cursor actually moved.
+        if self.state.current_view == View::Subscriptions {
+            self.state.preview_selected_subscription().await?;
         }
 
         Ok(())

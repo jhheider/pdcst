@@ -1,5 +1,6 @@
 use crate::models::{Episode, Subscription};
 use anyhow::{Context, Result};
+use atom_syndication::Feed;
 use chrono::{DateTime, Utc};
 use rss::Channel;
 
@@ -8,6 +9,23 @@ pub struct FeedParser;
 impl FeedParser {
     pub fn parse_channel(rss_content: &str) -> Result<Channel> {
         Channel::read_from(rss_content.as_bytes()).context("Failed to parse RSS feed")
+    }
+
+    /// Parse a feed's episodes, trying strict RSS 2.0 first and falling back to
+    /// Atom. Most podcast feeds are RSS, but some are Atom outright and a few
+    /// have quirks a strict RSS parse rejects - the fallback keeps those from
+    /// failing wholesale. If neither format fits, the error names both failures
+    /// so the subscription row can show *why* (see the per-feed error surfacing).
+    pub fn parse_episodes(subscription_id: uuid::Uuid, content: &str) -> Result<Vec<Episode>> {
+        match Channel::read_from(content.as_bytes()) {
+            Ok(channel) => Ok(Self::episodes_from_channel(subscription_id, &channel)),
+            Err(rss_err) => match Feed::read_from(content.as_bytes()) {
+                Ok(feed) => Ok(Self::episodes_from_atom(subscription_id, &feed)),
+                Err(atom_err) => Err(anyhow::anyhow!(
+                    "not valid RSS ({rss_err}) or Atom ({atom_err})"
+                )),
+            },
+        }
     }
 
     pub fn subscription_from_channel(rss_url: String, channel: &Channel) -> Subscription {
@@ -87,6 +105,50 @@ impl FeedParser {
         Some(episode)
     }
 
+    fn episodes_from_atom(subscription_id: uuid::Uuid, feed: &Feed) -> Vec<Episode> {
+        feed.entries()
+            .iter()
+            .filter_map(|entry| Self::episode_from_atom_entry(subscription_id, entry))
+            .collect()
+    }
+
+    fn episode_from_atom_entry(
+        subscription_id: uuid::Uuid,
+        entry: &atom_syndication::Entry,
+    ) -> Option<Episode> {
+        // The audio lives on a `<link rel="enclosure">`; an entry without one is
+        // not a playable episode (e.g. a text-only post), so skip it.
+        let enclosure = entry.links().iter().find(|l| l.rel() == "enclosure")?;
+        let url = enclosure.href().to_string();
+        if url.is_empty() {
+            return None;
+        }
+
+        let title = entry.title().value.clone();
+        let guid = if entry.id().is_empty() {
+            url.clone()
+        } else {
+            entry.id().to_string()
+        };
+        // Atom carries RFC 3339 timestamps already parsed by the crate. Prefer
+        // <published>, fall back to the required <updated>.
+        let published_at = entry
+            .published()
+            .copied()
+            .unwrap_or_else(|| *entry.updated())
+            .with_timezone(&Utc);
+
+        let mut episode = Episode::new(subscription_id, title, url, guid, published_at);
+        episode.description = entry
+            .summary()
+            .map(|t| t.value.clone())
+            .or_else(|| entry.content().and_then(|c| c.value().map(String::from)));
+        episode.file_type = enclosure.mime_type().map(String::from);
+        episode.file_size_bytes = enclosure.length().and_then(|l| l.parse::<i64>().ok());
+
+        Some(episode)
+    }
+
     fn parse_duration(duration_str: &str) -> Option<i64> {
         // Duration can be in formats: "HH:MM:SS", "MM:SS", or just seconds as a number
         let parts: Vec<&str> = duration_str.split(':').collect();
@@ -123,5 +185,67 @@ mod tests {
         assert_eq!(FeedParser::parse_duration("3661"), Some(3661));
         assert_eq!(FeedParser::parse_duration("45:30"), Some(2730));
         assert_eq!(FeedParser::parse_duration("1:30:45"), Some(5445));
+    }
+
+    const RSS: &str = r#"<?xml version="1.0"?>
+        <rss version="2.0"><channel><title>Show</title><description>d</description>
+        <link>https://example.com</link>
+        <item>
+            <title>Ep 1</title>
+            <guid>guid-1</guid>
+            <enclosure url="https://example.com/1.mp3" length="123" type="audio/mpeg"/>
+        </item>
+        </channel></rss>"#;
+
+    // A minimal Atom feed with a podcast-style enclosure link.
+    const ATOM: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <title>Atom Show</title>
+          <id>urn:show</id>
+          <updated>2026-07-10T10:00:00Z</updated>
+          <entry>
+            <title>Atom Ep 1</title>
+            <id>urn:ep:1</id>
+            <updated>2026-07-10T10:00:00Z</updated>
+            <published>2026-07-10T10:00:00Z</published>
+            <summary>An atom episode.</summary>
+            <link rel="enclosure" type="audio/mpeg" length="456"
+                  href="https://example.com/atom1.mp3"/>
+          </entry>
+        </feed>"#;
+
+    #[test]
+    fn parse_episodes_reads_strict_rss() {
+        let sub = uuid::Uuid::new_v4();
+        let eps = FeedParser::parse_episodes(sub, RSS).unwrap();
+        assert_eq!(eps.len(), 1);
+        assert_eq!(eps[0].title, "Ep 1");
+        assert_eq!(eps[0].guid, "guid-1");
+        assert_eq!(eps[0].url, "https://example.com/1.mp3");
+    }
+
+    #[test]
+    fn parse_episodes_falls_back_to_atom() {
+        let sub = uuid::Uuid::new_v4();
+        let eps = FeedParser::parse_episodes(sub, ATOM).unwrap();
+        assert_eq!(eps.len(), 1, "the atom entry with an enclosure is parsed");
+        assert_eq!(eps[0].title, "Atom Ep 1");
+        assert_eq!(eps[0].guid, "urn:ep:1");
+        assert_eq!(eps[0].url, "https://example.com/atom1.mp3");
+        assert_eq!(eps[0].file_size_bytes, Some(456));
+        assert_eq!(eps[0].file_type.as_deref(), Some("audio/mpeg"));
+        assert_eq!(eps[0].description.as_deref(), Some("An atom episode."));
+    }
+
+    #[test]
+    fn parse_episodes_errors_on_neither_format() {
+        let sub = uuid::Uuid::new_v4();
+        let err = FeedParser::parse_episodes(sub, "not xml at all")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("RSS") && err.contains("Atom"),
+            "names both: {err}"
+        );
     }
 }

@@ -60,9 +60,12 @@ async fn renders_populated_lists_with_markers() {
     state.playback_position = 600.0;
 
     // Selection near the bottom exercises the scroll offset, and each list view
-    // renders its markers.
+    // renders its markers. Set every pane's cursor so whichever view is drawn is
+    // scrolled (the library panes and the single-list views track separately).
     for view in [View::Subscriptions, View::Episodes, View::Queue] {
         state.set_view(view);
+        state.subscription_index = 2;
+        state.episode_index = 2;
         state.selected_index = 2;
         draw(&ui, &mut state);
     }
