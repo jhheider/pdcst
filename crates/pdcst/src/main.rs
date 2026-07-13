@@ -6,6 +6,7 @@ use pdcst::utils::logging;
 
 #[derive(Parser, Debug)]
 #[command(name = "pdcst")]
+#[command(version)]
 #[command(about = "A terminal-based podcast player", long_about = None)]
 struct Cli {
     /// Path to custom configuration file

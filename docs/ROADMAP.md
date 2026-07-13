@@ -264,22 +264,29 @@ Make it a portable single binary and ship it.
       uses `features = ["sqlite", ...]`, so it compiles the SQLite amalgamation
       and links it statically today: `otool -L` / `ldd` show no `libsqlite3`. The
       "one-line change" is obsolete. No action needed.
-- [ ] **Static ALSA: blocked, document the reality.** `alsa-sys` 0.4 hardcodes
-      `pkg_config...statik(false)`, and ALSA `dlopen`s its plugins at runtime, so
-      a clean static `libasound` is not feasible without forking alsa-sys - and
-      even then the plugin story is fragile. The honest portable-Linux path is
-      **musl + bundled sqlite + dynamic libasound** (one documented runtime dep,
-      `apt install libasound2` / present on any desktop). Revisit only if the
-      engine ever changes. On macOS this is moot (CoreAudio, no ALSA).
-- [ ] **Release workflow.** A `jhheider/rust-ci` `release.yml` caller (bin-name,
-      target matrix, optional Homebrew tap), like edikt/penknife. Ties into the
-      musl/static story above.
-- [ ] **Version reset (Jacob's call).** `pdcst` is at `1.0.0`, which
-      overclaims. Reset to `0.x` before any real release. `wsola` versions
-      independently. (Left for Jacob: which 0.x, and whether to tag at all.)
-- [ ] **Release workflow + name.** `release.yml` caller + musl target matrix;
-      also unify the identity (`pdcst` repo vs `pdcst` binary vs "Podcast
-      TUI" header). Jacob's call.
+- [x] **Static ALSA: blocked, so ship glibc + dynamic libasound.** `alsa-sys`
+      0.4 hardcodes `pkg_config...statik(false)`, and ALSA `dlopen`s its plugins
+      at runtime, so a clean static `libasound` (musl or otherwise) is not
+      feasible. Resolved: the Linux target is **`x86_64-unknown-linux-gnu` with
+      dynamic libasound**, not musl. The build installs `libasound2-dev` +
+      `pkg-config` (via rust-ci's `system-packages` input); the Homebrew formula
+      `depends_on "alsa-lib"` on Linux; runtime needs `libasound2` (present on any
+      desktop). macOS is moot (CoreAudio, no ALSA).
+- [x] **Repo public + public runners.** Went public 2026-07-13. CI/style/audit
+      reverted from the self-hosted `studio-pdcst` runner to free hosted runners
+      (`ci.yml` matrix Linux + macOS with `system-packages`). Follow-up (Jacob's
+      infra box): remove the `pdcst` service from `jhheider/gha-runner` and
+      `just clean-stale`.
+- [x] **Release workflow.** `jhheider/rust-ci` `release.yml@v1` caller on
+      `release: published`: builds `pdcst` for `x86_64-unknown-linux-gnu` +
+      `aarch64/x86_64-apple-darwin`, attaches the archives, **publishes only the
+      `wsola` crate** to crates.io (pdcst stays unpublished; the action skips
+      already-published versions), and refreshes `Formula/pdcst.rb` in
+      `jhheider/homebrew-tap`. Needed a new rust-ci input (`system-packages`,
+      v1.5.0) so the Linux build can apt-install the ALSA headers.
+- [x] **Version.** Reset to `0.2.0` earlier; `0.3.0` for the polish pass; `0.3.1`
+      adds `--version` (clap) + the distribution wiring. `wsola` stays `0.1.0`,
+      published independently. Identity unified to `pdcst` throughout.
 
 ## Product fitness (product-designer + tui-ux agents, 2026-07-12)
 

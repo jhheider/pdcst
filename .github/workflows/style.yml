@@ -1,7 +1,7 @@
 name: Style
 
-# Prose gate (no em-dashes / en-dashes) over jhheider/rust-ci. Self-hosted
-# because this is a private repo.
+# Prose gate (no em-dashes / en-dashes) over jhheider/rust-ci. Public repo, so
+# it runs on the free hosted runner.
 on:
   pull_request:
   push:
@@ -14,5 +14,3 @@ concurrency:
 jobs:
   style:
     uses: jhheider/rust-ci/.github/workflows/style.yml@v1
-    with:
-      runs-on: self-hosted
