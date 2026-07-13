@@ -6,7 +6,6 @@ use std::sync::Arc;
 use chrono::Utc;
 use pdcst::app::events::EventBus;
 use pdcst::app::state::{AppState, Services};
-use pdcst::artwork::ArtworkManager;
 use pdcst::audio::{AudioPlayer, AudioStreamer};
 use pdcst::download::DownloadManager;
 use pdcst::feed::{FeedRefresher, PodcastSearch};
@@ -22,7 +21,6 @@ pub async fn build_state() -> (AppState, TempDir) {
     let config = Config {
         data_dir: dir.path().to_path_buf(),
         download_dir: dir.path().join("downloads"),
-        artwork_dir: dir.path().join("artwork"),
         ..Config::default()
     };
 
@@ -49,7 +47,6 @@ pub async fn build_state() -> (AppState, TempDir) {
             },
         )),
         podcast_search: Arc::new(PodcastSearch::new()),
-        artwork_manager: Arc::new(ArtworkManager::new(config.artwork_dir.clone())),
     };
 
     (AppState::new(config, db, services, event_bus), dir)

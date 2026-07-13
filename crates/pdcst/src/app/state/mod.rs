@@ -1,5 +1,4 @@
 use crate::app::events::{EventBus, StateEvent};
-use crate::artwork::ArtworkManager;
 use crate::audio::{AudioPlayer, AudioStreamer};
 use crate::download::DownloadManager;
 use crate::feed::{FeedRefresher, PodcastSearch, SearchResult};
@@ -114,7 +113,6 @@ pub struct AppState {
     pub download_manager: Arc<DownloadManager>,
     pub feed_refresher: Arc<FeedRefresher>,
     pub podcast_search: Arc<PodcastSearch>,
-    pub artwork_manager: Arc<ArtworkManager>,
     pub event_bus: Arc<EventBus>,
 
     // UI state
@@ -177,7 +175,6 @@ pub struct Services {
     pub download_manager: Arc<DownloadManager>,
     pub feed_refresher: Arc<FeedRefresher>,
     pub podcast_search: Arc<PodcastSearch>,
-    pub artwork_manager: Arc<ArtworkManager>,
 }
 
 mod library;
@@ -200,7 +197,6 @@ impl AppState {
             download_manager,
             feed_refresher,
             podcast_search,
-            artwork_manager,
         } = services;
 
         // Note: Auto-advance logic has been moved to App to use event-driven architecture
@@ -233,7 +229,6 @@ impl AppState {
             download_manager,
             feed_refresher,
             podcast_search,
-            artwork_manager,
             event_bus,
             current_view: View::Subscriptions,
             selected_index: 0,
