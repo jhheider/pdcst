@@ -112,7 +112,7 @@ mod tests {
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
         // Queue: [a, b]; unshifting `a` at the top (pos 0) is illegal, so it
-        // moves to pos 1 (between a and b) - still adjacent to a on the left...
+        // moves to pos 1 (between a and b), still adjacent to a on the left...
         // pos 1 has left=a (same) so illegal; pos 2 has left=b, legal.
         let subs = [a, b];
         assert_eq!(nearest_legal_position(&subs, a, 0, 0, true), 2);

@@ -296,12 +296,12 @@ fn audio_thread(
 ) {
     // No output device (a headless box, CI, or an audio-less machine) must not
     // kill the thread: stay alive in silent mode so the handle and command
-    // channel keep working and the app never deadlocks - it just makes no sound.
+    // channel keep working and the app never deadlocks; it just makes no sound.
     let device = match DeviceSinkBuilder::open_default_sink() {
         Ok(mut d) => {
             // The sink is dropped exactly once, on every clean quit, when this
             // thread returns after a `Shutdown`. rodio warns on that drop
-            // ("Dropping DeviceSink...") straight to stderr - which lands as
+            // ("Dropping DeviceSink...") straight to stderr, which lands as
             // stray text in the shell after our alt-screen is already torn down.
             // Here the drop is always the intended shutdown, so the warning is a
             // false positive every time; silence it.

@@ -35,7 +35,7 @@ impl AppState {
         }
     }
 
-    /// Focus the left (Subscriptions) pane without moving its cursor - the Esc/h
+    /// Focus the left (Subscriptions) pane without moving its cursor; the Esc/h
     /// path back out of the episode list, which must land on the same feed you
     /// drilled into rather than jumping to the top.
     pub fn focus_subscriptions(&mut self) {

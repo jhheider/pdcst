@@ -85,7 +85,7 @@ impl App {
                 return Ok(());
             }
 
-            // Esc - close a modal, step back within Search, leave Search, or
+            // Esc: close a modal, step back within Search, leave Search, or
             // drill back out of Episodes.
             KeyCode::Esc => {
                 if self.state.modal != Modal::None {
@@ -298,7 +298,7 @@ impl App {
             }
             // Find an updated feed URL for the selected subscription (title
             // search), then prompt to switch. The recovery path for a feed whose
-            // URL moved - the '!' rows in the Subscriptions pane.
+            // URL moved: the '!' rows in the Subscriptions pane.
             KeyCode::Char('f') => {
                 self.state.find_feed_fix();
             }
@@ -340,7 +340,7 @@ impl App {
         }
 
         // Two-pane library: keep the right (Episodes) pane in sync with the
-        // highlighted feed. Cheap and idempotent - it reloads only when the
+        // highlighted feed. Cheap and idempotent; it reloads only when the
         // left-pane cursor now points at a different subscription than the one
         // shown, so calling it after any key while the left pane is focused is a
         // no-op unless the cursor actually moved.

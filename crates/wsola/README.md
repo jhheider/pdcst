@@ -2,7 +2,7 @@
 
 Pitch-preserved audio time-stretch (WSOLA), pure Rust, no C.
 
-Change the *tempo* of an audio stream without changing its *pitch* - speed a
+Change the *tempo* of an audio stream without changing its *pitch*: speed a
 podcast to 1.5x without the chipmunk effect. The engine is WSOLA (Waveform
 Similarity Overlap-Add): a time-domain method that is real-time capable, good on
 speech, and far simpler than a phase vocoder.
@@ -47,7 +47,7 @@ speed up, further apart to slow down), and overlap-adds them with a Hann window.
 New spacing changes duration; leaving each frame's samples untouched preserves
 pitch. Before laying down each frame it searches a small window of nearby input
 positions for the segment whose waveform best *continues* the previous frame, so
-the overlap-add joins coherent waveforms instead of fighting phases - that is the
+the overlap-add joins coherent waveforms instead of fighting phases; that is the
 "waveform similarity" that avoids clicks.
 
 See the crate docs for the full API and the algorithm notes.

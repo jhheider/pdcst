@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 use super::*;
 
-/// Delay before an automatic reconnect attempt after a stream drops - long
+/// Delay before an automatic reconnect attempt after a stream drops; long
 /// enough to ride out a brief blip, short enough to feel responsive.
 const STREAM_RETRY_DELAY: Duration = Duration::from_secs(2);
 
@@ -24,10 +24,10 @@ impl AppState {
                 self.play_episode_at(episode, start).await?;
             }
         } else if self.audio_player.get_current_episode().await.is_some() {
-            // Episode already loaded (paused mid-listen) - just resume.
+            // Episode already loaded (paused mid-listen); just resume.
             self.audio_player.play().await;
         } else if let Some(episode) = self.current_episode.clone() {
-            // Nothing loaded yet (e.g. a restored last-session episode) - load
+            // Nothing loaded yet (e.g. a restored last-session episode); load
             // and resume from the saved position.
             self.play_episode(episode).await?;
         }
@@ -66,7 +66,7 @@ impl AppState {
     /// Start playing an episode, resuming from its saved position if any.
     ///
     /// The audio fetch (a whole-body HTTP download or a file read) runs in a
-    /// spawned task so it never blocks the event loop - the UI stays responsive
+    /// spawned task so it never blocks the event loop; the UI stays responsive
     /// while "Loading..." shows. When the fetch completes, the audio player
     /// publishes `PlaybackStarted`, which clears the loading status; a failure
     /// publishes `PlaybackError`, which surfaces as an error modal.
@@ -293,7 +293,7 @@ impl AppState {
 
 /// Start an episode playing from `start`, choosing the source: a downloaded
 /// episode plays straight from its on-disk file; a remote one streams to disk
-/// and starts as soon as a prebuffer lands. Both decode off disk - nothing is
+/// and starts as soon as a prebuffer lands. Both decode off disk; nothing is
 /// buffered wholesale in memory. Runs off the event loop (a spawned task or the
 /// auto-advance task), so the prebuffer wait never freezes the UI.
 pub(crate) async fn load_and_play(

@@ -1,4 +1,4 @@
-//! The App's reaction to `StateEvent`s from the event bus - the UI-state side of
+//! The App's reaction to `StateEvent`s from the event bus: the UI-state side of
 //! the event-driven loop (the render happens in the run loop after this runs).
 
 use super::App;
@@ -18,7 +18,7 @@ impl App {
             PlaybackStarted { episode_id } => {
                 self.state.is_playing = true;
                 // The load finished: drop the "Loading..." status, and clear any
-                // stream-drop self-heal state - a successful start means we healed.
+                // stream-drop self-heal state: a successful start means we healed.
                 self.state.clear_status();
                 self.state.clear_stream_interruption();
                 // A fresh episode should checkpoint promptly on its first tick,
@@ -83,7 +83,7 @@ impl App {
                         tracing::warn!("stream reconnect gave up after {MAX_STREAM_RETRIES} tries");
                         self.state.stream_interrupted = true;
                         self.state.playback_notice =
-                            Some("Stream interrupted - press play to resume".to_string());
+                            Some("Stream interrupted; press play to resume".to_string());
                     }
                 }
             }
@@ -199,7 +199,7 @@ impl App {
                 self.state.search_results = results;
                 self.state.focus_search_results();
                 self.state.set_status(
-                    "No exact match - pick a feed to re-point, or edit the search.".to_string(),
+                    "No exact match; pick a feed to re-point, or edit the search.".to_string(),
                 );
             }
 

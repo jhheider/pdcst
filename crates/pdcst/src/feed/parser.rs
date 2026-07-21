@@ -8,7 +8,7 @@ use rss::Channel;
 pub struct FeedParser;
 
 /// Guess whether a feed is best consumed oldest-first (a serial or narrative
-/// series - Revolutions, a history course) rather than newest-first (news /
+/// series, Revolutions, a history course) rather than newest-first (news /
 /// current affairs). Best-effort from the title and iTunes categories; always
 /// overridable with `O`.
 fn guess_oldest_first(title: &str, categories: &[String]) -> bool {
@@ -35,7 +35,7 @@ impl FeedParser {
 
     /// Parse a feed's episodes, trying strict RSS 2.0 first and falling back to
     /// Atom. Most podcast feeds are RSS, but some are Atom outright and a few
-    /// have quirks a strict RSS parse rejects - the fallback keeps those from
+    /// have quirks a strict RSS parse rejects; the fallback keeps those from
     /// failing wholesale. If neither format fits, the error names both failures
     /// so the subscription row can show *why* (see the per-feed error surfacing).
     pub fn parse_episodes(subscription_id: uuid::Uuid, content: &str) -> Result<Vec<Episode>> {

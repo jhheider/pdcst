@@ -9,7 +9,7 @@
 //!
 //! Because the file persists, a later play (this session or after a restart)
 //! **resumes the download** with an HTTP `Range` request from the bytes already
-//! on disk, and the decoder's seek lands in the already-downloaded region - so a
+//! on disk, and the decoder's seek lands in the already-downloaded region, so a
 //! resume jumps straight to your position with no re-buffering from the start.
 //! The file keeps its final name whether partial or complete; the episode's
 //! `Downloaded` status (set once the download finishes) is what distinguishes
@@ -33,7 +33,7 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
-/// Bytes to buffer on disk before playback starts - a few seconds of audio at
+/// Bytes to buffer on disk before playback starts: a few seconds of audio at
 /// typical podcast bitrates, enough to start fast while the rest downloads.
 const PREBUFFER_BYTES: u64 = 256 * 1024;
 
@@ -97,7 +97,7 @@ impl DiskStream {
     /// keyed by `episode_id`. Returns immediately; the download runs in a spawned
     /// task. If a file is already there (a partial from an earlier play), the
     /// download resumes from its current size via an HTTP `Range` request. The
-    /// file uses its final name whether partial or complete - the episode's
+    /// file uses its final name whether partial or complete; the episode's
     /// `Downloaded` status (set on completion) distinguishes the two, so there is
     /// no rename to race a reader.
     fn start(
@@ -186,7 +186,7 @@ impl DiskStream {
 ///
 /// Handles the three responses to a range request: `206 Partial Content`
 /// (append), `416 Range Not Satisfiable` (the file is already complete), and a
-/// plain `200` (the server ignored `Range`, so restart from zero - a rare
+/// plain `200` (the server ignored `Range`, so restart from zero; a rare
 /// fallback for a CDN without range support).
 async fn download_resumable(
     client: Client,
@@ -402,7 +402,7 @@ impl AudioStreamer {
         let client = Client::builder()
             .user_agent("pdcst/0.2")
             // No total timeout: a long episode may stream for the whole listen.
-            // Bound stalls instead - fail if the connection goes quiet.
+            // Bound stalls instead; fail if the connection goes quiet.
             .connect_timeout(Duration::from_secs(30))
             .read_timeout(Duration::from_secs(60))
             .build()
@@ -612,7 +612,7 @@ mod tests {
 
     /// A resume opens the existing partial file and range-requests only the
     /// missing tail, then the reader yields the whole episode (bytes on disk +
-    /// the range-fetched remainder) - no re-buffer from the start.
+    /// the range-fetched remainder); no re-buffer from the start.
     #[tokio::test]
     async fn open_stream_resumes_partial_via_range() {
         let mut server = mockito::Server::new_async().await;

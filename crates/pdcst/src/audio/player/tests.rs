@@ -256,7 +256,7 @@ async fn test_concurrent_seeks() {
         handles.push(handle);
     }
 
-    // Wait for all to complete - should not deadlock
+    // Wait for all to complete; should not deadlock
     let timeout =
         tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(handles)).await;
 

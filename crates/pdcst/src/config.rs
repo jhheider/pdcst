@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 const DEFAULT_CONFIG_TEMPLATE: &str = r#"# pdcst configuration.
 #
 # Written automatically on first run. Every setting below is OPTIONAL and shown
-# at its default - uncomment and edit any you want to change, or delete this file
+# at its default; uncomment and edit any you want to change, or delete this file
 # to regenerate it. `pdcst --print-config` shows the effective values and this
 # file's path.
 
@@ -110,7 +110,7 @@ impl Config {
 }
 
 /// Best-effort: write the commented default template to `path` (creating its
-/// parent). A failure here is not fatal - the app runs on built-in defaults - so
+/// parent). A failure here is not fatal (the app runs on built-in defaults), so
 /// it is logged, not propagated.
 fn write_default_template(path: &Path) {
     if let Some(parent) = path.parent()

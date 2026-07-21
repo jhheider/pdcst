@@ -172,7 +172,7 @@ impl FeedRefresher {
             Err(e) => {
                 // Persist why this feed failed so its row can show it (a dead URL,
                 // an unparseable feed), not just a transient status that scrolls
-                // away. Kept short - the row has limited width.
+                // away. Kept short; the row has limited width.
                 let detail = truncate_error(&e.to_string());
                 if let Err(db_err) = db.set_subscription_error(sub.id, Some(&detail)).await {
                     tracing::warn!(

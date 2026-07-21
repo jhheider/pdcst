@@ -1,13 +1,13 @@
 //! Pitch-preserved audio time-stretch (WSOLA), pure Rust, no C.
 //!
-//! Change the *tempo* of an audio stream without changing its *pitch* - speed a
+//! Change the *tempo* of an audio stream without changing its *pitch*: speed a
 //! podcast to 1.5x without the chipmunk effect. The engine is WSOLA (Waveform
 //! Similarity Overlap-Add): a time-domain method that is real-time capable, good
 //! on speech, and far simpler than a phase vocoder.
 //!
 //! # Why WSOLA (and how it works)
 //!
-//! Naive tempo change resamples - playing samples faster shifts pitch up. WSOLA
+//! Naive tempo change resamples: playing samples faster shifts pitch up. WSOLA
 //! instead cuts the input into overlapping frames, lays them back down at a
 //! *different* spacing (closer together to speed up, further apart to slow
 //! down), and overlap-adds them with a Hann window. Placing frames at a new
@@ -245,7 +245,7 @@ impl TimeStretch {
     }
 
     /// Discard all buffered input and output and reset the stretch state, as if
-    /// freshly constructed - but keep the configured geometry and tempo. Use
+    /// freshly constructed, but keep the configured geometry and tempo. Use
     /// this after seeking the upstream source to a new position.
     pub fn reset(&mut self) {
         self.input.clear();

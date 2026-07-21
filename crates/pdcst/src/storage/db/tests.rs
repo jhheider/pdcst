@@ -41,7 +41,7 @@ async fn test_migrations_are_idempotent() {
 
     drop(db1);
 
-    // Second run - should not error
+    // Second run; should not error
     let db2 = Database::new(&db_path).await.unwrap();
 
     // Verify same number of migrations
@@ -350,7 +350,7 @@ async fn refresh_reinsert_preserves_user_state_and_identity() {
     .unwrap();
 
     // A refresh re-parses the feed: same (subscription_id, guid) but a fresh id,
-    // a metadata change, and default user-state - exactly what INSERT OR REPLACE
+    // a metadata change, and default user-state: exactly what INSERT OR REPLACE
     // used to clobber (position/played/download reset, id changed -> FK nulled).
     let mut refreshed = create_test_episode(sub.id, "Updated title");
     refreshed.guid = ep.guid.clone();

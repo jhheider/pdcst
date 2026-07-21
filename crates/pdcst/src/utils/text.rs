@@ -3,7 +3,7 @@
 //! the stored string is clean and every render site draws it as-is.
 //!
 //! 1. **Entities.** Feed strings arrive with HTML entities the XML layer does not
-//!    resolve - numeric (`&#8217;`, `&#x2019;`) and named (`&amp;`, `&rsquo;`).
+//!    resolve: numeric (`&#8217;`, `&#x2019;`) and named (`&amp;`, `&rsquo;`).
 //!    Left alone they render as literal text. [`decode_entities`] resolves them;
 //!    decoding is lossless (the entity *is* the character).
 //!
@@ -30,7 +30,7 @@ const ZWJ: char = '\u{200D}';
 /// Handles numeric decimal (`&#8217;`), numeric hex (`&#x2019;` / `&#X2019;`),
 /// and a table of the named entities that actually show up in podcast feeds.
 /// Unlike a strict XML unescape, an unknown entity (`&weird;`) is passed through
-/// verbatim rather than failing the whole string - real feeds are messy, and a
+/// verbatim rather than failing the whole string; real feeds are messy, and a
 /// bare `&` or a stray `&foo;` must not wipe out decoding for the rest of the
 /// text.
 pub fn decode_entities(input: &str) -> String {
@@ -136,7 +136,7 @@ pub fn clean_feed_text(input: &str) -> String {
 }
 
 /// Strip only the emoji joiners that make cluster width disagree with the
-/// terminal - ZWJ, variation selectors (`U+FE00..=U+FE0F`), and skin-tone
+/// terminal: ZWJ, variation selectors (`U+FE00..=U+FE0F`), and skin-tone
 /// modifiers (`U+1F3FB..=U+1F3FF`). Every other code point, including ordinary
 /// emoji, accents, CJK, and curly quotes, is preserved. Used as the second half
 /// of [`clean_feed_text`] at ingest.

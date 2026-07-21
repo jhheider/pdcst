@@ -40,7 +40,7 @@ impl App {
                         .publish(StateEvent::SubscriptionAdded { subscription_id });
                 }
                 Err(e) => {
-                    // Log but continue - might be duplicate RSS URL
+                    // Log but continue; might be duplicate RSS URL
                     tracing::warn!("Failed to import {}: {}", sub.title, e);
                 }
             }

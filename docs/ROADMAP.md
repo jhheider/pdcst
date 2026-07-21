@@ -51,7 +51,7 @@ current-state summary.
 - **Polish + reliability passes** (v0.3.0-v0.3.2): two-pane ranger-style Library,
   episode cards, subscription counts, honest per-feed errors + Atom fallback +
   feed recovery (`f`), abrupt-exit save, and **feed-text normalization** (HTML
-  entities + ZWJ emoji stripped at ingest, v0.3.2 - brief
+  entities + ZWJ emoji stripped at ingest, v0.3.2, brief
   `pdcst-emoji-ghost-glyphs`).
 - **Distribution** (Phase E): public repo, hosted CI (fmt + clippy `-D warnings`
   + tests + the no-em-dash style gate), and a `jhheider/rust-ci` `release.yml`
@@ -90,7 +90,7 @@ the single-user daily-driver thesis. Ordered by leverage:
      startup I/O, and the `artwork_manager` fields on `Services`/`AppState`. The
      inert `Subscription.artwork_url`/`artwork_path` *data* columns are kept (they
      do no I/O, and dropping DB columns would be a schema change, not "no behavior
-     change") - only the live-but-dead subsystem is gone.
+     change"); only the live-but-dead subsystem is gone.
    - Deleted the **dead/misleading config knobs**: `keybindings`/`KeyBindings`,
      `theme`/`Theme`, `show_artwork`, `artwork_protocol`/`ArtworkProtocol`,
      `artwork_dir`, `trim_silence`, and the unused-and-inverted
@@ -110,12 +110,12 @@ rendering, manual queue reorder, download-progress UI, sync, discovery, themes.
 ## Phases
 
 Ordering rationale: finish the audio path (A) so daily listening works; make the
-app usable at all (B) - you currently cannot subscribe from inside it; then build
+app usable at all (B): you currently cannot subscribe from inside it; then build
 the deal (C) on top of a working queue + listen state; then keep it fed (D);
 then ship it (E). Listen-state tracking (part of the deal) starts in A/B because
 it is foundational.
 
-### Phase A - finish the audio rewrite (in flight on PR #4)
+### Phase A: finish the audio rewrite (in flight on PR #4)
 
 - [x] Stage 1: rodio 0.22 migration.
 - [x] Stage 2: wsola pitch-corrected speed.
@@ -133,18 +133,18 @@ it is foundational.
       episode to a temp file in the background while a `GrowingFile` reader feeds
       the decoder off the same file, blocking only when a read runs ahead of the
       downloaded frontier (real EOF on completion, error on failure). Playback
-      starts after a `PREBUFFER_BYTES` (256 KiB) prebuffer - soonest start, no UI
+      starts after a `PREBUFFER_BYTES` (256 KiB) prebuffer: soonest start, no UI
       block, nothing buffered wholesale in memory. Downloaded episodes play
       straight from their file (`AudioPlayer::play_from_file`); remote ones use
       `play_stream`; both share one generic `start_playback<R: Read + Seek>`.
       (A mid-stream download failure used to end the episode like a normal
-      completion; fixed - see "What's left" item 1, it now surfaces as a
+      completion; fixed, see "What's left" item 1, it now surfaces as a
       `PlaybackError`/`StreamInterrupted` with the position kept.)
       **Made persistent + resumable later (v0.4.x):** the stream now writes to a
       persistent `download_dir/{id}.{ext}` instead of a purged temp file. A later
       play (this session or after restart) resumes the download via an HTTP
       `Range` request from the bytes already on disk, and the decoder's seek lands
-      in the already-downloaded region - so a resume jumps to your position with
+      in the already-downloaded region, so a resume jumps to your position with
       no re-buffer from the start (handles 206/416, and 200 as a no-range
       fallback). On completion the episode is marked `Downloaded`, so it then
       plays straight off disk and normal retention manages it. This removed the
@@ -183,16 +183,16 @@ it is foundational.
       OPML, play an episode, confirm 1.5x sounds sped-up (not chipmunk), seek
       works, resume works.
 
-### Phase B - make it usable (the UX pass)
+### Phase B: make it usable (the UX pass)
 
-Reference: PocketCasts for Mac is installed (Electron, DOM-inspectable) - mine it
+Reference: PocketCasts for Mac is installed (Electron, DOM-inspectable); mine it
 for the interaction model and keybindings. Informed by the `product-designer` and
 `tui-ux` agents (2026-07-12), which converged: the Phase B bar is not "usable app"
 in the abstract, it is "the Up Next queue is inspectable, operable, and
 trustworthy, and I can never fall into a broken input state." Sequenced into PRs,
 tier-1 (the gate into Phase C) first.
 
-**PR 1 - input routing + view model (done, this PR):**
+**PR 1: input routing + view model (done, this PR):**
 - [x] **Text-entry no longer collides with global keys.** Quit is a
       `should_quit` flag set in `handle_key_event` (not a raw `q` match in the run
       loop), so a literal `q` while typing no longer quits the app; Ctrl-C is the
@@ -206,7 +206,7 @@ tier-1 (the gate into Phase C) first.
       `page_down` use one `max_index()` over the current view's list, fixing the
       `_ => 0` no-ops in Queue/Search.
 
-**PR 2 - scrolling + display (done):**
+**PR 2: scrolling + display (done):**
 - [x] **List scrolling.** `ListState` + `render_stateful_widget` is now the one
       selection+scroll mechanism (`render` takes `&mut AppState`; `sync_list_selection`
       clamps + points it each frame; reset in `set_view`). Hand-rolled
@@ -222,7 +222,7 @@ tier-1 (the gate into Phase C) first.
 - [ ] NO_COLOR (strip all fg/bg) deferred; `REVERSED` already makes the selection
       theme-independent, which was the load-bearing part.
 
-**PR 3 - queue + search operability (done):**
+**PR 3: queue + search operability (done):**
 - [x] **Subscribe from the running app.** A `SearchFocus` (Input vs Results):
       typing runs in the box, Enter runs the query and moves focus to the results
       list, Enter there calls `subscribe_from_search_result`; Esc steps back to
@@ -257,7 +257,7 @@ dead `PlaybackPanel`/alt keymap (do the subtraction, skip the adoption).
       every view (empty, populated, modals, search) and now also asserts buffer
       content (feed-text snippet, the stream-drop notice).
 
-### Phase C - the auto-queue (THE DEAL)
+### Phase C: the auto-queue (THE DEAL)
 
 Build the five requirements from the top of this doc. This is the reason the app
 exists; do not treat it as a nice-to-have.
@@ -299,14 +299,14 @@ refresh, watch Up Next fill) is Jacob's to run.
 - Depends on: a working editable queue (Phase B, done), resume/listen-state
   (Phase A, done), and refresh (Phase D) as the trigger source.
 
-### Phase D - refresh scheduling (done)
+### Phase D: refresh scheduling (done)
 
 The auto-queue's trigger. `feed::spawn_auto_refresh` (in `feed/scheduler.rs`,
 wired in `App::new`) refreshes every feed once ~3s after launch and then every
 `config.auto_refresh_interval_minutes` (default 60; `0` disables the periodic
 pass, launch refresh still runs). It reuses the semaphore-bounded
 `FeedRefresher::refresh_all`, so it publishes the same `FeedRefresh*` events (UI
-progress) and runs the Phase C auto-enqueue hook - so new episodes now land in
+progress) and runs the Phase C auto-enqueue hook, so new episodes now land in
 Up Next on their own, no manual `R`. The Settings view shows the interval.
 
 - [x] on-launch + periodic background refresh, concurrency-bounded.
@@ -315,7 +315,7 @@ Up Next on their own, no manual `R`. The Settings view shows the interval.
 - Note: a manual `R` racing the auto-refresh on the same feed is a narrow,
   accepted race (both dedup by guid; worst case a transient double-enqueue).
 
-### Phase E - distribution and static linking
+### Phase E: distribution and static linking
 
 Make it a portable single binary and ship it.
 
@@ -356,7 +356,7 @@ for its owner; the core loop closes end to end. Fixes landed this pass:
 
 - [x] **Subscribe now fetches episodes.** `subscribe_from_search_result` spawns a
       `refresh_one`, so a fresh feed is not empty until the next scheduled
-      refresh. (Was the #1 leverage bug - a stranger's first action produced a
+      refresh. (Was the #1 leverage bug: a stranger's first action produced a
       blank screen.)
 - [x] **Empty Episodes view has guidance** ("press r to refresh").
 - [x] **Actions no longer lie.** `a`/`d`/`x`/`s` return whether they acted; the
@@ -388,7 +388,7 @@ Remaining for a public release (Jacob's calls, not built):
 
 Cosmetic papercuts (deferred): emoji in headers (cross-terminal width),
 per-view footer hints, search-box arrow keys seek instead of editing.
-(`Modal::Confirm` is no longer dead - the polish pass below wired it for the
+(`Modal::Confirm` is no longer dead; the polish pass below wired it for the
 feed-recovery prompt.)
 
 ## Polish pass (2026-07-12): the surrounding info/reliability layer
@@ -400,7 +400,7 @@ layer thin. Brief: jhheider/briefs `pdcst-polish-pass`. All six findings fixed
 
 - [x] **Feed refresh errors are honest + more feeds parse.** `FeedParser::
       parse_episodes` tries strict RSS 2.0, then falls back to Atom
-      (`atom_syndication`, which reuses the existing `quick-xml 0.41` - no
+      (`atom_syndication`, which reuses the existing `quick-xml 0.41`, no
       openssl/aws-lc). A `last_error` column (migration `20250712000002`) records
       the most recent failure per feed (set on failure, cleared on success); the
       subscription row shows a red `!` marker + the reason. The per-failure error
@@ -459,14 +459,14 @@ layer thin. Brief: jhheider/briefs `pdcst-polish-pass`. All six findings fixed
     State via atomics; changes published on the `EventBus`. rodio 0.22:
     `DeviceSinkBuilder::open_default_sink()`, `Player::connect_new(mixer)`,
     `player.try_seek`, `player.get_pos`, `player.empty`. Speed does NOT use
-    `player.set_speed` (that pitch-shifts) - it goes through wsola.
+    `player.set_speed` (that pitch-shifts); it goes through wsola.
   - `wsola_source.rs`: `WsolaSource<S: Source>` wraps the decoder; tempo from a
     shared `Arc<AtomicU32>` (f32 bits), source-time position to
     `Arc<AtomicU64>`. `try_seek` -> inner seek + `TimeStretch::reset` + reposition.
   - `stream.rs`: progressive stream-to-disk. `AudioStreamer::open_stream` starts
     a `DiskStream` (background download to a temp file under
     `config.stream_cache_dir()`), waits for a 256 KiB prebuffer, and returns a
-    `GrowingFile` - a blocking, seekable reader that waits when it runs ahead of
+    `GrowingFile`: a blocking, seekable reader that waits when it runs ahead of
     the downloaded frontier. Feeds `AudioPlayer::play_stream`; downloaded
     episodes use `play_from_file`. `AppState::load_and_play` picks between them.
 - **wsola API**: `TimeStretch::new(sr, ch)` / `with_config`, `set_tempo`,
@@ -502,11 +502,11 @@ layer thin. Brief: jhheider/briefs `pdcst-polish-pass`. All six findings fixed
 ## The audit (three-lens), for reference
 
 A code-critical, a product, and a TUI-UX review of the pre-work state agreed:
-this is not a shell and not near-done - it is well-built vertical slices that
+this is not a shell and not near-done; it is well-built vertical slices that
 were never wired together, with the wiring layer (untested) holding every
 showstopper. Genuinely done toward a daily-usable player was ~35%. Verdict:
-**finish, rescoped** to "a fast local keyboard player I actually use" - and the
+**finish, rescoped** to "a fast local keyboard player I actually use", and the
 user's directive since then makes the **auto-queue the centerpiece of that
 goal**, not an afterthought. Cut for good: sync (impossible locally), in-terminal
-artwork rendering (the rabbit hole - the renderer stays a stub), discovery, DSP
+artwork rendering (the rabbit hole; the renderer stays a stub), discovery, DSP
 effects beyond pitch-corrected speed, and the word "parity."

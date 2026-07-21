@@ -6,7 +6,7 @@
 //!   changes from the async side take effect live without touching the audio
 //!   callback with a lock.
 //! - **Position is tracked in source time** (input samples consumed), not the
-//!   stretched output time, and written to a shared atomic - so "12:34 of 45:00"
+//!   stretched output time, and written to a shared atomic, so "12:34 of 45:00"
 //!   means the same thing at any speed. Seeking resets the stretch state and the
 //!   position to the requested source instant.
 

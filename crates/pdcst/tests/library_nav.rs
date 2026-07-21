@@ -206,7 +206,7 @@ async fn subscription_error_round_trips() {
 }
 
 /// Confirming a feed re-point swaps the URL, clears the error, and dismisses the
-/// modal - the recovery path for a moved feed.
+/// modal: the recovery path for a moved feed.
 #[tokio::test]
 async fn confirming_repoint_switches_the_feed_url() {
     let (mut state, _dir) = build_state().await;

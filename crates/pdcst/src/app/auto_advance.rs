@@ -2,7 +2,7 @@
 //!
 //! On every `PlaybackCompleted`, it marks the finished episode played,
 //! optionally reclaims its download (`delete_on_finish`), removes it from the
-//! queue, and plays the next queued episode - skipping any that fail to load.
+//! queue, and plays the next queued episode, skipping any that fail to load.
 //! This is the seed of the Phase C auto-queue; for now it lives as a standalone
 //! background task spawned at startup.
 
@@ -71,7 +71,7 @@ pub(crate) fn spawn(deps: AutoAdvance) {
                     }
 
                     // Advance the queue via the shared path (mark played, remove,
-                    // take next), then play it - retrying past any that fail to
+                    // take next), then play it, retrying past any that fail to
                     // load. `load_and_play` streams to disk like a manual play.
                     let mut next = match queue_manager.advance(completed_episode_id, true).await {
                         Ok(next) => next,
@@ -119,7 +119,7 @@ pub(crate) fn spawn(deps: AutoAdvance) {
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     tracing::warn!("Auto-advance task lagged, skipped {} events", skipped);
-                    // Continue processing - we'll catch the next PlaybackCompleted
+                    // Continue processing; we'll catch the next PlaybackCompleted
                 }
                 Err(broadcast::error::RecvError::Closed) => {
                     tracing::info!("Event bus closed, stopping auto-advance");

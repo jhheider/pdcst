@@ -81,7 +81,7 @@ fn pane_border(focused: bool) -> Color {
 }
 
 /// The host of a feed URL (e.g. `feeds.simplecast.com`), for the search-result
-/// metadata line - a moved feed is often recognisable by where it now lives.
+/// metadata line: a moved feed is often recognisable by where it now lives.
 /// Returns `None` for a URL without a clear host.
 fn feed_host(url: &str) -> Option<String> {
     let after_scheme = url.split("://").nth(1).unwrap_or(url);
@@ -353,7 +353,7 @@ impl Ui {
             .map(|s| s.title.clone())
             .unwrap_or_else(|| "Episodes".to_string());
 
-        // A freshly-subscribed feed can be empty until its refresh lands - say so
+        // A freshly-subscribed feed can be empty until its refresh lands, say so
         // rather than showing a blank box.
         if state.episodes.is_empty() {
             let hint = if state.current_subscription.is_some() {
@@ -416,7 +416,7 @@ impl Ui {
                 ]);
 
                 // Line 2: newest-first date (blue), duration, and a queue badge
-                // (yellow) - fields already in the model, coloured so each card
+                // (yellow): fields already in the model, coloured so each card
                 // has an anchor rather than another gray line.
                 let mut line2_spans = vec![
                     Span::raw("   "),

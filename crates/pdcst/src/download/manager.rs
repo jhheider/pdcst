@@ -178,7 +178,7 @@ impl DownloadManager {
 
                 tracing::error!("Failed to download episode {}: {}", episode.title, e);
 
-                // Emit download failed event (only if not cancelled - cancellation event already sent)
+                // Emit download failed event (only if not cancelled; cancellation event already sent)
                 if !e.to_string().contains("cancelled") {
                     self.event_bus.publish(StateEvent::DownloadFailed {
                         episode_id: episode.id,

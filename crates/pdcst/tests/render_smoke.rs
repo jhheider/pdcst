@@ -1,7 +1,7 @@
 //! Render smoke tests: every view must draw into a TestBackend without
 //! panicking, with realistic data (a subscription, episodes with each listen
 //! state, a non-empty queue, a now-playing episode). CI has no terminal, so this
-//! is the only automated guard on the rendering layer - exactly where the app's
+//! is the only automated guard on the rendering layer, exactly where the app's
 //! showstoppers historically lived.
 
 mod common;

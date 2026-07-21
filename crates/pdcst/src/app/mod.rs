@@ -248,7 +248,7 @@ impl App {
                             })?;
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                            tracing::warn!("UI event receiver lagged, skipped {} events - requesting full state refresh", skipped);
+                            tracing::warn!("UI event receiver lagged, skipped {} events; requesting full state refresh", skipped);
 
                             // When events are dropped, sync state from source of truth
                             self.state.is_playing = self.state.audio_player.is_playing().await;

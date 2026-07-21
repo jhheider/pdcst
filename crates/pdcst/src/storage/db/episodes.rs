@@ -8,15 +8,15 @@ use uuid::Uuid;
 use super::Database;
 
 impl Database {
-    /// Insert an episode, or - if one with the same `(subscription_id, guid)`
-    /// already exists - refresh only its feed-derived metadata.
+    /// Insert an episode, or, if one with the same `(subscription_id, guid)`
+    /// already exists, refresh only its feed-derived metadata.
     ///
     /// Crucially this must NOT be an `INSERT OR REPLACE`: that deletes and
     /// re-inserts the row, which (a) resets the user-state columns
     /// (`playback_position_seconds`, `played`, `download_status`, `local_path`)
     /// to the parsed feed's defaults, wiping resume position and downloads, and
     /// (b) mints a new `id`, so the delete fires the `playback_state` and queue
-    /// foreign keys - nulling the now-playing episode and dropping queued items.
+    /// foreign keys, nulling the now-playing episode and dropping queued items.
     /// Every background refresh re-parses all episodes, so `REPLACE` silently
     /// erased resume/queue state on the next refresh. The upsert below touches
     /// only feed metadata and leaves identity + user-state intact.
@@ -169,7 +169,7 @@ impl Database {
         Ok(())
     }
 
-    /// Clear the "new" (unacknowledged) flag on a single episode - it has been
+    /// Clear the "new" (unacknowledged) flag on a single episode; it has been
     /// seen. Does not touch `played`, so "seen but not listened" is expressible.
     pub async fn mark_episode_seen(&self, id: Uuid) -> Result<()> {
         sqlx::query("UPDATE episodes SET is_new = 0 WHERE id = ?")
@@ -179,7 +179,7 @@ impl Database {
         Ok(())
     }
 
-    /// Mark every episode of a subscription seen - the backlog-clearing action
+    /// Mark every episode of a subscription seen: the backlog-clearing action
     /// for a freshly-imported feed (OPML carries no listen history, so all its
     /// episodes arrive "new"). Returns the number of rows changed.
     pub async fn mark_subscription_seen(&self, subscription_id: Uuid) -> Result<u64> {

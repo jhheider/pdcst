@@ -11,7 +11,7 @@ never clobbering what is playing, with listen state tracked for every episode.
 On a commute that queue was the whole game. That is the goal here.
 
 Not the goal: cloud sync (impossible in a local app), discovery, or a
-settings-heavy UI. The edge is simple - mine, fast, self-contained, does not
+settings-heavy UI. The edge is simple: mine, fast, self-contained, does not
 crash, and keeps my queue full.
 
 ## Status
@@ -24,7 +24,7 @@ plan has landed:
   wait for the full download), and bounded on-disk caching (delete-on-finish +
   size caps).
 - **The auto-queue** (the point): mark a feed with `A` and new episodes fill Up
-  Next automatically - pushed or unshifted per feed, capped at a max depth,
+  Next automatically, pushed or unshifted per feed, capped at a max depth,
   smartly interleaved so you never get a run of one show, never clobbering what
   is playing. Listen state (unplayed / in-progress / played) is tracked
   everywhere.
@@ -92,8 +92,8 @@ self-hosted runner. TLS is rustls + ring only, no OpenSSL/aws-lc.
 ## Acknowledgments
 
 Pocket Casts, for showing what a podcast queue should feel like. And the Rust
-audio and TUI ecosystems - ratatui, crossterm, rodio, symphonia, sqlx, tokio,
-reqwest - that make a single small binary like this possible.
+audio and TUI ecosystems: ratatui, crossterm, rodio, symphonia, sqlx, tokio,
+reqwest, that make a single small binary like this possible.
 
 ## License
 

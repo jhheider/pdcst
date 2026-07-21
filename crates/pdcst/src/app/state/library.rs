@@ -1,11 +1,11 @@
-//! AppState: the content library - loading subscriptions/episodes, search,
+//! AppState: the content library, loading subscriptions/episodes, search,
 //! subscribe, queueing, downloads, refresh, and per-item actions.
 
 #[allow(unused_imports)]
 use super::*;
 
 impl AppState {
-    // Note: update() method removed - state is now event-driven
+    // Note: update() method removed; state is now event-driven
     // State fields are updated via events published by AudioPlayer, DownloadManager, etc.
 
     pub async fn load_subscriptions(&mut self) -> Result<()> {
@@ -309,7 +309,7 @@ impl AppState {
                 Ok(results) => {
                     // A *confident* auto-suggestion needs a title that relates to
                     // the subscription (exact, or one title contains the other)
-                    // and a different, non-empty URL - iTunes' top hit for an
+                    // and a different, non-empty URL; iTunes' top hit for an
                     // unindexed show is often an unrelated podcast, so we don't
                     // want to auto-offer that. When there's no confident match we
                     // still hand back the raw results as a picker (the user judges
@@ -500,7 +500,7 @@ impl AppState {
 
     /// `S`: mark seen (acknowledge without listening). In the Episodes pane it
     /// clears the selected episode's "new" flag; in the Subscriptions pane it
-    /// marks the whole selected feed seen - the backlog clear for a freshly
+    /// marks the whole selected feed seen: the backlog clear for a freshly
     /// imported feed whose episodes all arrived "new". Returns whether it acted.
     pub async fn mark_seen(&mut self) -> Result<bool> {
         match self.current_view {
