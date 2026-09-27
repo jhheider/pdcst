@@ -235,9 +235,7 @@ impl TimeStretch {
                 }
             }
             self.primed = false;
-            for x in &mut self.accum {
-                *x = 0.0;
-            }
+            self.accum.fill(0.0);
         }
         // Resume cleanly if the caller pushes more input after a flush.
         self.draining = false;
@@ -255,9 +253,7 @@ impl TimeStretch {
         self.draining = false;
         self.ideal = 0.0;
         self.last_src = 0;
-        for x in &mut self.accum {
-            *x = 0.0;
-        }
+        self.accum.fill(0.0);
     }
 
     #[inline]

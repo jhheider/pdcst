@@ -22,3 +22,6 @@ Thumbs.db
 
 # Personal dogfood data (real podcast subscriptions - do not commit)
 /podcasts.opml
+
+# Agent worktrees
+/.claude/worktrees/
