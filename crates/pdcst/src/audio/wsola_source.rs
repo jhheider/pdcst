@@ -24,7 +24,6 @@ const BLOCK_FRAMES: usize = 2048;
 /// Wraps a rodio source and stretches it to `tempo` while preserving pitch.
 pub struct WsolaSource<S> {
     inner: S,
-    sample_rate: SampleRate,
     ts: TimeStretch,
     /// Tempo multiplier as `f32` bits; read each refill.
     tempo: Arc<AtomicU32>,
@@ -48,7 +47,6 @@ impl<S: Source> WsolaSource<S> {
         ts.set_tempo(last_tempo);
         Self {
             inner,
-            sample_rate,
             ts,
             tempo,
             position_ms,
@@ -82,7 +80,7 @@ impl<S: Source> WsolaSource<S> {
 
         self.in_frames += (buf.len() / ch) as u64;
         self.position_ms.store(
-            self.in_frames * 1000 / self.sample_rate.get() as u64,
+            self.in_frames * 1000 / self.ts.sample_rate().get() as u64,
             Ordering::Relaxed,
         );
         self.ts.push(&buf);
@@ -116,7 +114,7 @@ impl<S: Source> Source for WsolaSource<S> {
     }
 
     fn sample_rate(&self) -> SampleRate {
-        self.sample_rate
+        self.ts.sample_rate()
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -131,7 +129,7 @@ impl<S: Source> Source for WsolaSource<S> {
         self.ts.set_tempo(t);
         self.out.clear();
         self.done = false;
-        self.in_frames = (pos.as_secs_f64() * self.sample_rate.get() as f64) as u64;
+        self.in_frames = (pos.as_secs_f64() * self.ts.sample_rate().get() as f64) as u64;
         self.position_ms
             .store(pos.as_millis() as u64, Ordering::Relaxed);
         Ok(())
