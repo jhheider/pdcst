@@ -211,20 +211,20 @@ impl TimeStretch {
     /// Pull up to `max` interleaved output samples, producing more from buffered
     /// input as needed. Returns a whole number of frames (a multiple of the
     /// channel count), fewer than `max` if not enough input has arrived yet.
-    pub fn pull(&mut self, max: usize) -> Vec<f32> {
+    pub fn pull(&mut self, max: usize) -> impl Iterator<Item = f32> {
         while self.output.len() < max {
             if !self.step() {
                 break;
             }
         }
         let n = max.min(self.output.len()) / self.channels * self.channels;
-        self.output.drain(0..n).collect()
+        self.output.drain(0..n)
     }
 
     /// Finish the stream: produce all remaining whole frames, emit the final
     /// overlap tail, and return everything still buffered. After `flush` the
     /// stretcher is drained; pushing more input resumes cleanly.
-    pub fn flush(&mut self) -> Vec<f32> {
+    pub fn flush(&mut self) -> impl Iterator<Item = f32> {
         self.draining = true;
         while self.step() {}
         if self.primed {
@@ -238,7 +238,7 @@ impl TimeStretch {
         }
         // Resume cleanly if the caller pushes more input after a flush.
         self.draining = false;
-        std::mem::take(&mut self.output)
+        self.output.drain(..)
     }
 
     /// Discard all buffered input and output and reset the stretch state, as if
@@ -411,7 +411,7 @@ pub fn stretch(samples: &[f32], sample_rate: u32, channels: u16, tempo: f32) -> 
     let mut ts = TimeStretch::new(sample_rate, channels)?;
     ts.set_tempo(tempo);
     ts.push(samples);
-    let mut out = ts.pull(usize::MAX);
+    let mut out: Vec<f32> = ts.pull(usize::MAX).collect();
     out.extend(ts.flush());
     Ok(out)
 }
