@@ -2,10 +2,13 @@
 //! never produce non-finite or runaway samples, must keep length roughly in
 //! step with tempo, and must give the same result streamed as in one shot.
 
+use std::num::{NonZeroU16, NonZeroU32};
+
 use proptest::prelude::*;
 use wsola::{TimeStretch, stretch};
 
-const SR: u32 = 44_100;
+const SAMPLE_RATE: NonZeroU32 = NonZeroU32::new(44_100).unwrap();
+const MONO_CHANNEL: NonZeroU16 = NonZeroU16::new(1).unwrap();
 
 proptest! {
     // Each case runs the O(n) algorithm over up to ~0.2 s of audio; keep the
@@ -17,7 +20,7 @@ proptest! {
         samples in proptest::collection::vec(-1.0f32..=1.0f32, 0..8000),
         tempo in 0.25f32..=4.0f32,
     ) {
-        let out = stretch(&samples, SR, 1, tempo).unwrap();
+        let out = stretch(&samples, SAMPLE_RATE, MONO_CHANNEL, tempo).unwrap();
         prop_assert!(out.iter().all(|s| s.is_finite()));
         let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         let out_peak = out.iter().fold(0.0f32, |m, s| m.max(s.abs()));
@@ -32,7 +35,7 @@ proptest! {
         tempo in 0.5f32..=2.0f32,
     ) {
         let samples = vec![0.05f32; len];
-        let out = stretch(&samples, SR, 1, tempo).unwrap();
+        let out = stretch(&samples, SAMPLE_RATE, MONO_CHANNEL, tempo).unwrap();
         let expected = len as f32 / tempo;
         // Loose bound: proportional to 1/tempo, with a few frames of edge slack.
         prop_assert!((out.len() as f32) <= expected * 1.3 + 4000.0);
@@ -45,9 +48,9 @@ proptest! {
         tempo in 0.5f32..=2.0f32,
         chunk in 1usize..2000,
     ) {
-        let one_shot = stretch(&samples, SR, 1, tempo).unwrap();
+        let one_shot = stretch(&samples, SAMPLE_RATE, MONO_CHANNEL, tempo).unwrap();
 
-        let mut ts = TimeStretch::new(SR, 1).unwrap();
+        let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
         ts.set_tempo(tempo);
         let mut streamed = Vec::new();
         for part in samples.chunks(chunk) {

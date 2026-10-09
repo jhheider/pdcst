@@ -40,23 +40,18 @@
 
 use std::collections::VecDeque;
 use std::f32::consts::PI;
+use std::num::{NonZeroU16, NonZeroU32};
 
 /// Errors from constructing or driving a [`TimeStretch`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    /// The sample rate was zero.
-    #[error("sample rate must be greater than zero")]
-    InvalidSampleRate,
-    /// The channel count was zero.
-    #[error("channel count must be greater than zero")]
-    InvalidChannels,
     /// An interleaved buffer length was not a whole number of frames.
     #[error("interleaved sample count {len} is not a multiple of {channels} channels")]
     UnalignedInput {
         /// The offending buffer length.
         len: usize,
         /// The configured channel count.
-        channels: u16,
+        channels: NonZeroU16,
     },
 }
 
@@ -95,8 +90,8 @@ impl Default for Config {
 /// See the [crate docs](crate) for the algorithm and a usage example.
 #[derive(Debug, Clone)]
 pub struct TimeStretch {
-    sample_rate: u32,
-    channels: usize,
+    sample_rate: NonZeroU32,
+    channels: NonZeroU16,
     tempo: f32,
 
     // Geometry, per channel (samples).
@@ -130,7 +125,7 @@ impl TimeStretch {
     /// # Errors
     /// [`Error::InvalidSampleRate`] if `sample_rate` is 0, [`Error::InvalidChannels`]
     /// if `channels` is 0.
-    pub fn new(sample_rate: u32, channels: u16) -> Result<Self> {
+    pub fn new(sample_rate: NonZeroU32, channels: NonZeroU16) -> Result<Self> {
         Self::with_config(sample_rate, channels, Config::default())
     }
 
@@ -138,18 +133,16 @@ impl TimeStretch {
     ///
     /// # Errors
     /// As [`new`](Self::new).
-    pub fn with_config(sample_rate: u32, channels: u16, config: Config) -> Result<Self> {
-        if sample_rate == 0 {
-            return Err(Error::InvalidSampleRate);
-        }
-        if channels == 0 {
-            return Err(Error::InvalidChannels);
-        }
-        let hop = ((sample_rate as f32 * config.hop_ms / 1000.0).round() as usize).max(1);
+    pub fn with_config(
+        sample_rate: NonZeroU32,
+        channels: NonZeroU16,
+        config: Config,
+    ) -> Result<Self> {
+        let sample_rate_f32 = sample_rate.get() as f32;
+        let hop = ((sample_rate_f32 * config.hop_ms / 1000.0).round() as usize).max(1);
         let frame = hop * 2;
-        let search = ((sample_rate as f32 * config.search_ms / 1000.0).round() as usize).max(1);
+        let search = ((sample_rate_f32 * config.search_ms / 1000.0).round() as usize).max(1);
         let window = hann(frame);
-        let channels = channels as usize;
         Ok(Self {
             sample_rate,
             channels,
@@ -164,7 +157,7 @@ impl TimeStretch {
             draining: false,
             ideal: 0.0,
             last_src: 0,
-            accum: vec![0.0; hop * channels],
+            accum: vec![0.0; hop * channels.get() as usize],
             output: VecDeque::new(),
         })
     }
@@ -184,13 +177,13 @@ impl TimeStretch {
     }
 
     /// Sample rate this stretcher was built for.
-    pub fn sample_rate(&self) -> u32 {
+    pub fn sample_rate(&self) -> NonZeroU32 {
         self.sample_rate
     }
 
     /// Channel count (interleaving factor).
-    pub fn channels(&self) -> u16 {
-        self.channels as u16
+    pub fn channels(&self) -> NonZeroU16 {
+        self.channels
     }
 
     /// Feed interleaved input frames. The caller must keep the buffer
@@ -206,7 +199,7 @@ impl TimeStretch {
 
     /// Per-channel input samples buffered but not yet consumed.
     pub fn buffered(&self) -> usize {
-        self.input.len() / self.channels
+        self.input.len() / self.channels_usize()
     }
 
     /// Pull up to `max` interleaved output samples, producing more from buffered
@@ -218,7 +211,7 @@ impl TimeStretch {
                 break;
             }
         }
-        let n = max.min(self.output.len()) / self.channels * self.channels;
+        let n = max.min(self.output.len()) / self.channels_usize() * self.channels.get() as usize;
         self.output.drain(0..n).collect()
     }
 
@@ -230,8 +223,9 @@ impl TimeStretch {
         while self.step() {}
         if self.primed {
             for i in 0..self.hop {
-                for c in 0..self.channels {
-                    self.output.push_back(self.accum[i * self.channels + c]);
+                for c in 0..self.channels_usize() {
+                    self.output
+                        .push_back(self.accum[i * self.channels_usize() + c]);
                 }
             }
             self.primed = false;
@@ -257,13 +251,18 @@ impl TimeStretch {
     }
 
     #[inline]
+    fn channels_usize(&self) -> usize {
+        self.channels.get() as usize
+    }
+
+    #[inline]
     fn at(&self, pos: usize, channel: usize) -> f32 {
-        self.input[(pos - self.origin) * self.channels + channel]
+        self.input[(pos - self.origin) * self.channels_usize() + channel]
     }
 
     #[inline]
     fn avail_end(&self) -> usize {
-        self.origin + self.input.len() / self.channels
+        self.origin + self.input.len() / self.channels_usize()
     }
 
     #[inline]
@@ -274,7 +273,7 @@ impl TimeStretch {
     /// Place one output frame if enough input is buffered. Returns false when it
     /// needs more input.
     fn step(&mut self) -> bool {
-        let ch = self.channels;
+        let ch = self.channels_usize();
         let ss = self.hop;
         let frame = self.frame;
         let avail_end = self.avail_end();
@@ -369,7 +368,7 @@ impl TimeStretch {
         let next_cand_lo = (self.ideal.round() as i64 - self.search as i64).max(0) as usize;
         let keep_from = self.last_src.min(next_cand_lo);
         if keep_from > self.origin + (1 << 16) {
-            let drop = (keep_from - self.origin) * self.channels;
+            let drop = (keep_from - self.origin) * self.channels_usize();
             self.input.drain(0..drop);
             self.origin = keep_from;
         }
@@ -397,11 +396,13 @@ fn hann(n: usize) -> Vec<f32> {
 /// let out = wsola::stretch(&[0.0f32; 8000], 8000, 1, 2.0).unwrap();
 /// assert!(out.len() < 8000); // roughly half as long at 2x
 /// ```
-pub fn stretch(samples: &[f32], sample_rate: u32, channels: u16, tempo: f32) -> Result<Vec<f32>> {
-    if channels == 0 {
-        return Err(Error::InvalidChannels);
-    }
-    if !samples.len().is_multiple_of(channels as usize) {
+pub fn stretch(
+    samples: &[f32],
+    sample_rate: NonZeroU32,
+    channels: NonZeroU16,
+    tempo: f32,
+) -> Result<Vec<f32>> {
+    if !samples.len().is_multiple_of(channels.get() as usize) {
         return Err(Error::UnalignedInput {
             len: samples.len(),
             channels,
@@ -422,25 +423,27 @@ mod tests {
     #[test]
     fn rejects_bad_config() {
         assert_eq!(
-            TimeStretch::new(0, 2).unwrap_err(),
-            Error::InvalidSampleRate
-        );
-        assert_eq!(
-            TimeStretch::new(44_100, 0).unwrap_err(),
-            Error::InvalidChannels
-        );
-        assert_eq!(
-            stretch(&[0.0; 3], 8000, 2, 1.0).unwrap_err(),
+            stretch(
+                &[0.0; 3],
+                NonZeroU32::new(8000).unwrap(),
+                NonZeroU16::new(2).unwrap(),
+                1.0
+            )
+            .unwrap_err(),
             Error::UnalignedInput {
                 len: 3,
-                channels: 2
+                channels: NonZeroU16::new(2).unwrap()
             }
         );
     }
 
     #[test]
     fn set_tempo_clamps_and_ignores_bad() {
-        let mut ts = TimeStretch::new(44_100, 1).unwrap();
+        let mut ts = TimeStretch::new(
+            NonZeroU32::new(44_100).unwrap(),
+            NonZeroU16::new(1).unwrap(),
+        )
+        .unwrap();
         assert_eq!(ts.tempo(), 1.0);
         ts.set_tempo(1.5);
         assert_eq!(ts.tempo(), 1.5);
@@ -456,9 +459,24 @@ mod tests {
 
     #[test]
     fn empty_and_tiny_inputs_do_not_panic() {
-        assert!(stretch(&[], 44_100, 1, 1.5).unwrap().is_empty());
+        assert!(
+            stretch(
+                &[],
+                NonZeroU32::new(44_100).unwrap(),
+                NonZeroU16::new(1).unwrap(),
+                1.5
+            )
+            .unwrap()
+            .is_empty()
+        );
         // Shorter than a frame: no full frame to place; must not panic.
-        let out = stretch(&[0.1, -0.1, 0.2], 44_100, 1, 2.0).unwrap();
+        let out = stretch(
+            &[0.1, -0.1, 0.2],
+            NonZeroU32::new(44_100).unwrap(),
+            NonZeroU16::new(1).unwrap(),
+            2.0,
+        )
+        .unwrap();
         assert!(out.iter().all(|s| s.is_finite()));
     }
 }

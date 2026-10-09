@@ -24,8 +24,6 @@ const BLOCK_FRAMES: usize = 2048;
 /// Wraps a rodio source and stretches it to `tempo` while preserving pitch.
 pub struct WsolaSource<S> {
     inner: S,
-    channels: ChannelCount,
-    sample_rate: SampleRate,
     ts: TimeStretch,
     /// Tempo multiplier as `f32` bits; read each refill.
     tempo: Arc<AtomicU32>,
@@ -35,7 +33,6 @@ pub struct WsolaSource<S> {
     in_frames: u64,
     out: VecDeque<f32>,
     done: bool,
-    last_tempo: f32,
 }
 
 impl<S: Source> WsolaSource<S> {
@@ -44,32 +41,28 @@ impl<S: Source> WsolaSource<S> {
     pub fn new(inner: S, tempo: Arc<AtomicU32>, position_ms: Arc<AtomicU64>) -> Self {
         let channels = inner.channels();
         let sample_rate = inner.sample_rate();
-        let mut ts = TimeStretch::new(sample_rate.get(), channels.get())
+        let mut ts = TimeStretch::new(sample_rate, channels)
             .expect("decoder reports nonzero sample rate and channels");
         let last_tempo = f32::from_bits(tempo.load(Ordering::Relaxed));
         ts.set_tempo(last_tempo);
         Self {
             inner,
-            channels,
-            sample_rate,
             ts,
             tempo,
             position_ms,
             in_frames: 0,
             out: VecDeque::new(),
             done: false,
-            last_tempo,
         }
     }
 
     fn refill(&mut self) {
         let t = f32::from_bits(self.tempo.load(Ordering::Relaxed));
-        if t != self.last_tempo {
+        if t != self.ts.tempo() {
             self.ts.set_tempo(t);
-            self.last_tempo = t;
         }
 
-        let ch = self.channels.get() as usize;
+        let ch = self.ts.channels().get() as usize;
         let mut buf = Vec::with_capacity(BLOCK_FRAMES * ch);
         for _ in 0..BLOCK_FRAMES * ch {
             match self.inner.next() {
@@ -87,7 +80,7 @@ impl<S: Source> WsolaSource<S> {
 
         self.in_frames += (buf.len() / ch) as u64;
         self.position_ms.store(
-            self.in_frames * 1000 / self.sample_rate.get() as u64,
+            self.in_frames * 1000 / self.ts.sample_rate().get() as u64,
             Ordering::Relaxed,
         );
         self.ts.push(&buf);
@@ -117,11 +110,11 @@ impl<S: Source> Source for WsolaSource<S> {
     }
 
     fn channels(&self) -> ChannelCount {
-        self.channels
+        self.ts.channels()
     }
 
     fn sample_rate(&self) -> SampleRate {
-        self.sample_rate
+        self.ts.sample_rate()
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -132,10 +125,11 @@ impl<S: Source> Source for WsolaSource<S> {
     fn try_seek(&mut self, pos: Duration) -> Result<(), SeekError> {
         self.inner.try_seek(pos)?;
         self.ts.reset();
-        self.ts.set_tempo(self.last_tempo);
+        let t = f32::from_bits(self.tempo.load(Ordering::Relaxed));
+        self.ts.set_tempo(t);
         self.out.clear();
         self.done = false;
-        self.in_frames = (pos.as_secs_f64() * self.sample_rate.get() as f64) as u64;
+        self.in_frames = (pos.as_secs_f64() * self.ts.sample_rate().get() as f64) as u64;
         self.position_ms
             .store(pos.as_millis() as u64, Ordering::Relaxed);
         Ok(())
