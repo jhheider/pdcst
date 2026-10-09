@@ -44,7 +44,7 @@ impl<S: Source> WsolaSource<S> {
     pub fn new(inner: S, tempo: Arc<AtomicU32>, position_ms: Arc<AtomicU64>) -> Self {
         let channels = inner.channels();
         let sample_rate = inner.sample_rate();
-        let mut ts = TimeStretch::new(sample_rate.get(), channels.get())
+        let mut ts = TimeStretch::new(sample_rate, channels)
             .expect("decoder reports nonzero sample rate and channels");
         let last_tempo = f32::from_bits(tempo.load(Ordering::Relaxed));
         ts.set_tempo(last_tempo);
