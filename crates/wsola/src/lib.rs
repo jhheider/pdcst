@@ -103,7 +103,7 @@ pub struct TimeStretch {
     hop: usize,    // Ss: synthesis hop, and the overlap length
     frame: usize,  // 2 * hop: Hann frame length
     search: usize, // similarity-search half-range
-    window: Vec<f32>,
+    window: Box<[f32]>,
 
     // Input ring: `input` holds interleaved samples for per-channel absolute
     // positions [origin, origin + input.len()/channels).
@@ -116,9 +116,9 @@ pub struct TimeStretch {
     // Otherwise a step waits for the full window, so streamed output is
     // bit-identical to processing the whole buffer at once.
     draining: bool,
-    ideal: f64,      // next ideal source position (per-channel absolute)
-    last_src: usize, // source of the previously placed frame
-    accum: Vec<f32>, // open output tail (interleaved, hop * channels)
+    ideal: f64,        // next ideal source position (per-channel absolute)
+    last_src: usize,   // source of the previously placed frame
+    accum: Box<[f32]>, // open output tail (interleaved, hop * channels)
 
     output: VecDeque<f32>,
 }
@@ -148,7 +148,7 @@ impl TimeStretch {
         let hop = ((sample_rate as f32 * config.hop_ms / 1000.0).round() as usize).max(1);
         let frame = hop * 2;
         let search = ((sample_rate as f32 * config.search_ms / 1000.0).round() as usize).max(1);
-        let window = hann(frame);
+        let window = hann(frame).into_boxed_slice();
         let channels = channels as usize;
         Ok(Self {
             sample_rate,
@@ -164,7 +164,7 @@ impl TimeStretch {
             draining: false,
             ideal: 0.0,
             last_src: 0,
-            accum: vec![0.0; hop * channels],
+            accum: vec![0.0; hop * channels].into_boxed_slice(),
             output: VecDeque::new(),
         })
     }
