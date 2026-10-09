@@ -35,7 +35,6 @@ pub struct WsolaSource<S> {
     in_frames: u64,
     out: VecDeque<f32>,
     done: bool,
-    last_tempo: f32,
 }
 
 impl<S: Source> WsolaSource<S> {
@@ -58,15 +57,13 @@ impl<S: Source> WsolaSource<S> {
             in_frames: 0,
             out: VecDeque::new(),
             done: false,
-            last_tempo,
         }
     }
 
     fn refill(&mut self) {
         let t = f32::from_bits(self.tempo.load(Ordering::Relaxed));
-        if t != self.last_tempo {
+        if t != self.ts.tempo() {
             self.ts.set_tempo(t);
-            self.last_tempo = t;
         }
 
         let ch = self.channels.get() as usize;
@@ -132,7 +129,8 @@ impl<S: Source> Source for WsolaSource<S> {
     fn try_seek(&mut self, pos: Duration) -> Result<(), SeekError> {
         self.inner.try_seek(pos)?;
         self.ts.reset();
-        self.ts.set_tempo(self.last_tempo);
+        let t = f32::from_bits(self.tempo.load(Ordering::Relaxed));
+        self.ts.set_tempo(t);
         self.out.clear();
         self.done = false;
         self.in_frames = (pos.as_secs_f64() * self.sample_rate.get() as f64) as u64;
