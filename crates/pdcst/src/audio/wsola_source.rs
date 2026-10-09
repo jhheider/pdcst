@@ -24,7 +24,6 @@ const BLOCK_FRAMES: usize = 2048;
 /// Wraps a rodio source and stretches it to `tempo` while preserving pitch.
 pub struct WsolaSource<S> {
     inner: S,
-    channels: ChannelCount,
     sample_rate: SampleRate,
     ts: TimeStretch,
     /// Tempo multiplier as `f32` bits; read each refill.
@@ -49,7 +48,6 @@ impl<S: Source> WsolaSource<S> {
         ts.set_tempo(last_tempo);
         Self {
             inner,
-            channels,
             sample_rate,
             ts,
             tempo,
@@ -66,7 +64,7 @@ impl<S: Source> WsolaSource<S> {
             self.ts.set_tempo(t);
         }
 
-        let ch = self.channels.get() as usize;
+        let ch = self.ts.channels().get() as usize;
         let mut buf = Vec::with_capacity(BLOCK_FRAMES * ch);
         for _ in 0..BLOCK_FRAMES * ch {
             match self.inner.next() {
@@ -114,7 +112,7 @@ impl<S: Source> Source for WsolaSource<S> {
     }
 
     fn channels(&self) -> ChannelCount {
-        self.channels
+        self.ts.channels()
     }
 
     fn sample_rate(&self) -> SampleRate {
