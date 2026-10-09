@@ -189,7 +189,7 @@ fn reset_clears_state_and_resumes_like_new() {
     let _ = ts.pull(usize::MAX);
     ts.reset();
     ts.push(&b);
-    let mut after_reset = ts.pull(usize::MAX);
+    let mut after_reset: Vec<f32> = ts.pull(usize::MAX).collect();
     after_reset.extend(ts.flush());
 
     let fresh = stretch(&b, SR, 1, 1.5).unwrap();

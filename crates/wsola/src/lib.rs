@@ -38,7 +38,6 @@
 //!
 //! For a whole buffer at once, use the [`stretch`] convenience function.
 
-use std::collections::VecDeque;
 use std::f32::consts::PI;
 
 /// Errors from constructing or driving a [`TimeStretch`].
@@ -103,7 +102,7 @@ pub struct TimeStretch {
     hop: usize,    // Ss: synthesis hop, and the overlap length
     frame: usize,  // 2 * hop: Hann frame length
     search: usize, // similarity-search half-range
-    window: Vec<f32>,
+    window: Box<[f32]>,
 
     // Input ring: `input` holds interleaved samples for per-channel absolute
     // positions [origin, origin + input.len()/channels).
@@ -116,11 +115,11 @@ pub struct TimeStretch {
     // Otherwise a step waits for the full window, so streamed output is
     // bit-identical to processing the whole buffer at once.
     draining: bool,
-    ideal: f64,      // next ideal source position (per-channel absolute)
-    last_src: usize, // source of the previously placed frame
-    accum: Vec<f32>, // open output tail (interleaved, hop * channels)
+    ideal: f64,        // next ideal source position (per-channel absolute)
+    last_src: usize,   // source of the previously placed frame
+    accum: Box<[f32]>, // open output tail (interleaved, hop * channels)
 
-    output: VecDeque<f32>,
+    output: Vec<f32>,
 }
 
 impl TimeStretch {
@@ -148,7 +147,7 @@ impl TimeStretch {
         let hop = ((sample_rate as f32 * config.hop_ms / 1000.0).round() as usize).max(1);
         let frame = hop * 2;
         let search = ((sample_rate as f32 * config.search_ms / 1000.0).round() as usize).max(1);
-        let window = hann(frame);
+        let window = hann(frame).into_boxed_slice();
         let channels = channels as usize;
         Ok(Self {
             sample_rate,
@@ -164,8 +163,8 @@ impl TimeStretch {
             draining: false,
             ideal: 0.0,
             last_src: 0,
-            accum: vec![0.0; hop * channels],
-            output: VecDeque::new(),
+            accum: vec![0.0; hop * channels].into_boxed_slice(),
+            output: Vec::new(),
         })
     }
 
@@ -212,26 +211,26 @@ impl TimeStretch {
     /// Pull up to `max` interleaved output samples, producing more from buffered
     /// input as needed. Returns a whole number of frames (a multiple of the
     /// channel count), fewer than `max` if not enough input has arrived yet.
-    pub fn pull(&mut self, max: usize) -> Vec<f32> {
+    pub fn pull(&mut self, max: usize) -> impl Iterator<Item = f32> {
         while self.output.len() < max {
             if !self.step() {
                 break;
             }
         }
         let n = max.min(self.output.len()) / self.channels * self.channels;
-        self.output.drain(0..n).collect()
+        self.output.drain(0..n)
     }
 
     /// Finish the stream: produce all remaining whole frames, emit the final
     /// overlap tail, and return everything still buffered. After `flush` the
     /// stretcher is drained; pushing more input resumes cleanly.
-    pub fn flush(&mut self) -> Vec<f32> {
+    pub fn flush(&mut self) -> impl Iterator<Item = f32> {
         self.draining = true;
         while self.step() {}
         if self.primed {
             for i in 0..self.hop {
                 for c in 0..self.channels {
-                    self.output.push_back(self.accum[i * self.channels + c]);
+                    self.output.push(self.accum[i * self.channels + c]);
                 }
             }
             self.primed = false;
@@ -239,7 +238,7 @@ impl TimeStretch {
         }
         // Resume cleanly if the caller pushes more input after a flush.
         self.draining = false;
-        self.output.drain(..).collect()
+        self.output.drain(..)
     }
 
     /// Discard all buffered input and output and reset the stretch state, as if
@@ -279,6 +278,8 @@ impl TimeStretch {
         let frame = self.frame;
         let avail_end = self.avail_end();
 
+        self.output.reserve(ss * ch);
+
         if !self.primed {
             if self.origin + frame > avail_end {
                 return false;
@@ -286,7 +287,7 @@ impl TimeStretch {
             let src = self.origin;
             for i in 0..ss {
                 for c in 0..ch {
-                    self.output.push_back(self.at(src + i, c) * self.window[i]);
+                    self.output.push(self.at(src + i, c) * self.window[i]);
                 }
             }
             for i in 0..ss {
@@ -349,7 +350,7 @@ impl TimeStretch {
         for i in 0..ss {
             for c in 0..ch {
                 let v = self.accum[i * ch + c] + self.at(src + i, c) * self.window[i];
-                self.output.push_back(v);
+                self.output.push(v);
             }
         }
         for i in 0..ss {
@@ -410,7 +411,7 @@ pub fn stretch(samples: &[f32], sample_rate: u32, channels: u16, tempo: f32) -> 
     let mut ts = TimeStretch::new(sample_rate, channels)?;
     ts.set_tempo(tempo);
     ts.push(samples);
-    let mut out = ts.pull(usize::MAX);
+    let mut out: Vec<f32> = ts.pull(usize::MAX).collect();
     out.extend(ts.flush());
     Ok(out)
 }
