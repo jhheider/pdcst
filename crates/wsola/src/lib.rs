@@ -38,7 +38,6 @@
 //!
 //! For a whole buffer at once, use the [`stretch`] convenience function.
 
-use std::collections::VecDeque;
 use std::f32::consts::PI;
 
 /// Errors from constructing or driving a [`TimeStretch`].
@@ -120,7 +119,7 @@ pub struct TimeStretch {
     last_src: usize,   // source of the previously placed frame
     accum: Box<[f32]>, // open output tail (interleaved, hop * channels)
 
-    output: VecDeque<f32>,
+    output: Vec<f32>,
 }
 
 impl TimeStretch {
@@ -165,7 +164,7 @@ impl TimeStretch {
             ideal: 0.0,
             last_src: 0,
             accum: vec![0.0; hop * channels].into_boxed_slice(),
-            output: VecDeque::new(),
+            output: Vec::new(),
         })
     }
 
@@ -231,7 +230,7 @@ impl TimeStretch {
         if self.primed {
             for i in 0..self.hop {
                 for c in 0..self.channels {
-                    self.output.push_back(self.accum[i * self.channels + c]);
+                    self.output.push(self.accum[i * self.channels + c]);
                 }
             }
             self.primed = false;
@@ -239,7 +238,7 @@ impl TimeStretch {
         }
         // Resume cleanly if the caller pushes more input after a flush.
         self.draining = false;
-        self.output.drain(..).collect()
+        std::mem::take(&mut self.output)
     }
 
     /// Discard all buffered input and output and reset the stretch state, as if
@@ -286,7 +285,7 @@ impl TimeStretch {
             let src = self.origin;
             for i in 0..ss {
                 for c in 0..ch {
-                    self.output.push_back(self.at(src + i, c) * self.window[i]);
+                    self.output.push(self.at(src + i, c) * self.window[i]);
                 }
             }
             for i in 0..ss {
@@ -349,7 +348,7 @@ impl TimeStretch {
         for i in 0..ss {
             for c in 0..ch {
                 let v = self.accum[i * ch + c] + self.at(src + i, c) * self.window[i];
-                self.output.push_back(v);
+                self.output.push(v);
             }
         }
         for i in 0..ss {
