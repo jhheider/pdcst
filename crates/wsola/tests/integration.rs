@@ -3,15 +3,18 @@
 //! duration scales with tempo, pitch does NOT, output stays finite and bounded,
 //! and streaming equals one-shot.
 
+use std::num::{NonZeroU16, NonZeroU32};
+
 use wsola::{Config, TimeStretch, stretch};
 
-const SR: u32 = 44_100;
+const SAMPLE_RATE: NonZeroU32 = NonZeroU32::new(44_100).unwrap();
+const MONO_CHANNEL: NonZeroU16 = NonZeroU16::new(1).unwrap();
 
 /// A mono sine of `freq` Hz for `secs` seconds at 44.1 kHz.
 fn sine(freq: f32, secs: f32) -> Vec<f32> {
-    let n = (SR as f32 * secs) as usize;
+    let n = (SAMPLE_RATE.get() as f32 * secs) as usize;
     (0..n)
-        .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / SR as f32).sin())
+        .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / SAMPLE_RATE.get() as f32).sin())
         .collect()
 }
 
@@ -33,7 +36,7 @@ fn dominant_freq(signal: &[f32]) -> f32 {
         }
     }
     // Two zero-crossings per cycle.
-    let secs = seg.len() as f32 / SR as f32;
+    let secs = seg.len() as f32 / SAMPLE_RATE.get() as f32;
     crossings as f32 / 2.0 / secs
 }
 
@@ -48,7 +51,7 @@ fn rms(signal: &[f32]) -> f32 {
 fn duration_scales_inversely_with_tempo() {
     let input = sine(220.0, 2.0);
     for &tempo in &[0.5f32, 0.75, 1.0, 1.5, 2.0] {
-        let out = stretch(&input, SR, 1, tempo).unwrap();
+        let out = stretch(&input, SAMPLE_RATE, MONO_CHANNEL, tempo).unwrap();
         let expected = input.len() as f32 / tempo;
         let ratio = out.len() as f32 / expected;
         // Within a few percent (boundary frames aside).
@@ -71,7 +74,7 @@ fn pitch_is_preserved_across_tempo() {
     );
 
     for &tempo in &[0.5f32, 0.75, 1.25, 1.5, 2.0] {
-        let out = stretch(&input, SR, 1, tempo).unwrap();
+        let out = stretch(&input, SAMPLE_RATE, MONO_CHANNEL, tempo).unwrap();
         let f = dominant_freq(&out);
         // The whole point: frequency must NOT move with tempo.
         assert!(
@@ -84,7 +87,7 @@ fn pitch_is_preserved_across_tempo() {
 #[test]
 fn identity_at_tempo_one_preserves_signal() {
     let input = sine(330.0, 1.0);
-    let out = stretch(&input, SR, 1, 1.0).unwrap();
+    let out = stretch(&input, SAMPLE_RATE, MONO_CHANNEL, 1.0).unwrap();
     // Length within a frame or two.
     assert!((out.len() as isize - input.len() as isize).unsigned_abs() < 4000);
     // Energy preserved (overlap-add of a Hann COLA reconstructs unit gain).
@@ -101,14 +104,14 @@ fn output_is_finite_and_bounded() {
     // A messy mix, not a clean tone.
     let input: Vec<f32> = (0..44_100)
         .map(|i| {
-            let t = i as f32 / SR as f32;
+            let t = i as f32 / SAMPLE_RATE.get() as f32;
             0.5 * (2.0 * std::f32::consts::PI * 200.0 * t).sin()
                 + 0.3 * (2.0 * std::f32::consts::PI * 517.0 * t).sin()
         })
         .collect();
     let peak = input.iter().fold(0.0f32, |m, s| m.max(s.abs()));
     for &tempo in &[0.5f32, 1.0, 1.7, 3.0] {
-        let out = stretch(&input, SR, 1, tempo).unwrap();
+        let out = stretch(&input, SAMPLE_RATE, MONO_CHANNEL, tempo).unwrap();
         assert!(
             out.iter().all(|s| s.is_finite()),
             "tempo {tempo}: non-finite output"
@@ -124,10 +127,10 @@ fn output_is_finite_and_bounded() {
 #[test]
 fn streaming_equals_one_shot() {
     let input = sine(300.0, 1.5);
-    let one_shot = stretch(&input, SR, 1, 1.5).unwrap();
+    let one_shot = stretch(&input, SAMPLE_RATE, MONO_CHANNEL, 1.5).unwrap();
 
     // Feed the same input in irregular chunks, pulling small amounts as we go.
-    let mut ts = TimeStretch::new(SR, 1).unwrap();
+    let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
     ts.set_tempo(1.5);
     let mut streamed = Vec::new();
     let chunks = [17usize, 1024, 4096, 99, 8192, 333];
@@ -160,14 +163,14 @@ fn streaming_equals_one_shot() {
 #[test]
 fn stereo_keeps_interleaving_and_pitch() {
     // Interleaved stereo: left 440 Hz, right 660 Hz.
-    let n = SR as usize * 2;
+    let n = SAMPLE_RATE.get() as usize * 2;
     let mut input = Vec::with_capacity(n * 2);
     for i in 0..n {
-        let t = i as f32 / SR as f32;
+        let t = i as f32 / SAMPLE_RATE.get() as f32;
         input.push((2.0 * std::f32::consts::PI * 440.0 * t).sin());
         input.push((2.0 * std::f32::consts::PI * 660.0 * t).sin());
     }
-    let out = stretch(&input, SR, 2, 1.5).unwrap();
+    let out = stretch(&input, SAMPLE_RATE, NonZeroU16::new(2).unwrap(), 1.5).unwrap();
     assert_eq!(out.len() % 2, 0, "interleaving broken");
 
     let left: Vec<f32> = out.iter().step_by(2).copied().collect();
@@ -183,7 +186,7 @@ fn reset_clears_state_and_resumes_like_new() {
 
     // Feed some audio, reset, then process `b` - result must equal processing
     // `b` on a fresh stretcher (reset leaves no residue from `a`).
-    let mut ts = TimeStretch::new(SR, 1).unwrap();
+    let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
     ts.set_tempo(1.5);
     ts.push(&a);
     let _ = ts.pull(usize::MAX);
@@ -192,7 +195,7 @@ fn reset_clears_state_and_resumes_like_new() {
     let mut after_reset = ts.pull(usize::MAX);
     after_reset.extend(ts.flush());
 
-    let fresh = stretch(&b, SR, 1, 1.5).unwrap();
+    let fresh = stretch(&b, SAMPLE_RATE, MONO_CHANNEL, 1.5).unwrap();
     assert_eq!(after_reset.len(), fresh.len());
     for (x, y) in after_reset.iter().zip(&fresh) {
         assert!((x - y).abs() < 1e-4);
@@ -204,7 +207,7 @@ fn reset_clears_state_and_resumes_like_new() {
 #[test]
 fn tempo_change_mid_stream_is_smooth() {
     let input = sine(400.0, 2.0);
-    let mut ts = TimeStretch::with_config(SR, 1, Config::default()).unwrap();
+    let mut ts = TimeStretch::with_config(SAMPLE_RATE, MONO_CHANNEL, Config::default()).unwrap();
     let mut out = Vec::new();
     ts.push(&input);
     // First half at 1.0, then switch to 1.5.
