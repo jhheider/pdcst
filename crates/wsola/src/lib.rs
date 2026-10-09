@@ -278,6 +278,8 @@ impl TimeStretch {
         let frame = self.frame;
         let avail_end = self.avail_end();
 
+        self.output.reserve(ss * ch);
+
         if !self.primed {
             if self.origin + frame > avail_end {
                 return false;
