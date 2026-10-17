@@ -18,3 +18,10 @@ thiserror.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+criterion.workspace = true
+rodio.workspace = true
+
+# General wsola test
+[[bench]]
+name = "perf"
+harness = false

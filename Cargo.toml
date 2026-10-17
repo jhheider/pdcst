@@ -70,3 +70,16 @@ tempfile = "3.0"
 mockito = "1.0"
 proptest = "1.0"
 atom_syndication = { version = "0.12", default-features = false }
+criterion = "0.8"
+
+# Custom bench profile that matches the debug profile closely.
+# This can be used to get proper metrics for debug performance.
+# Main for wsola use.
+[profile.bench-debug]
+inherits = "bench"
+opt-level = 3
+debug = true
+
+# Only drop optimization level for the crate itself, to more accurately measure it
+[profile.bench-debug.package."wsola"]
+opt-level = 0

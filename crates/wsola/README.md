@@ -52,6 +52,18 @@ the overlap-add joins coherent waveforms instead of fighting phases; that is the
 
 See the crate docs for the full API and the algorithm notes.
 
+## Performance in debug profile
+
+Performance while in debug profile (or just `opt-level` `0`) can be using more CPU than
+should be necessary.
+It is recommended to set the following options to always optimize this crate:
+
+```toml
+# Cargo.toml
+[profile.dev.package.wsola]
+opt-level = 3
+```
+
 ## License
 
 MIT.

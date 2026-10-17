@@ -223,15 +223,19 @@ impl TimeStretch {
     pub fn flush(&mut self) -> impl Iterator<Item = f32> {
         self.draining = true;
         while self.step() {}
+
         if self.primed {
+            let ch = self.channels_usize();
             for i in 0..self.hop {
-                for c in 0..self.channels_usize() {
-                    self.output.push(self.accum[i * self.channels_usize() + c]);
+                let base_accum_idx = i * ch;
+                for c in 0..ch {
+                    self.output.push(self.accum[base_accum_idx + c]);
                 }
             }
             self.primed = false;
             self.accum.fill(0.0);
         }
+
         // Resume cleanly if the caller pushes more input after a flush.
         self.draining = false;
         self.output.drain(..)
@@ -257,11 +261,6 @@ impl TimeStretch {
     }
 
     #[inline]
-    fn at(&self, pos: usize, channel: usize) -> f32 {
-        self.input[(pos - self.origin) * self.channels_usize() + channel]
-    }
-
-    #[inline]
     fn avail_end(&self) -> usize {
         self.origin + self.input.len() / self.channels_usize()
     }
@@ -275,49 +274,70 @@ impl TimeStretch {
     /// needs more input.
     fn step(&mut self) -> bool {
         let ch = self.channels_usize();
-        let ss = self.hop;
+        let hop = self.hop;
         let frame = self.frame;
         let avail_end = self.avail_end();
 
-        self.output.reserve(ss * ch);
+        self.output.reserve(hop * ch);
+
+        let origin = self.origin;
+        let input = &self.input;
 
         if !self.primed {
-            if self.origin + frame > avail_end {
+            if origin + frame > avail_end {
                 return false;
             }
-            let src = self.origin;
-            for i in 0..ss {
+
+            // Pre-slice the input so that bound checks are done once
+            // and have to have less calculations in the loops.
+            let input_start_idx = origin * ch;
+            let target_len = hop * ch;
+            let input_slice = &input[input_start_idx..input_start_idx + target_len];
+            let window_slice = &self.window[..hop];
+
+            for (i, win) in window_slice.iter().enumerate() {
+                let base_idx = i * ch;
                 for c in 0..ch {
-                    self.output.push(self.at(src + i, c) * self.window[i]);
+                    let sample_idx = base_idx + c;
+                    self.output.push(input_slice[sample_idx] * win);
                 }
             }
-            for i in 0..ss {
+
+            // Pre-slice the input so that bound checks are done once
+            // and have to have less calculations in the loops.
+            let input_slice =
+                &input[input_start_idx + target_len..input_start_idx + target_len * 2];
+            let window_slice = &self.window[hop..hop * 2];
+
+            for (i, win) in window_slice.iter().enumerate() {
+                let base_idx = i * ch;
                 for c in 0..ch {
-                    self.accum[i * ch + c] = self.at(src + ss + i, c) * self.window[ss + i];
+                    let sample_idx = base_idx + c;
+                    self.accum[sample_idx] = input_slice[sample_idx] * win;
                 }
             }
-            self.last_src = src;
-            self.ideal = src as f64 + self.analysis_hop();
+            self.last_src = origin;
+            self.ideal = origin as f64 + self.analysis_hop();
             self.primed = true;
             self.compact();
             return true;
         }
 
         let base = self.ideal.round() as i64;
-        let cmin = self.origin as i64;
+        let cmin = origin as i64;
         let cmax = avail_end as i64 - frame as i64;
-        let target = self.last_src + ss;
+        let target = self.last_src + hop;
 
         // The highest input index this step could read: the top candidate's
         // frame end, or the correlation target's end. Unless we are draining the
         // last frames at end of stream, wait until all of it is buffered, so the
         // search sees the same full candidate range it would in one shot.
-        let needed_end = (base + self.search as i64 + frame as i64).max((target + ss) as i64);
+        let needed_end = (base + self.search as i64 + frame as i64).max((target + hop) as i64);
         if !self.draining && needed_end > avail_end as i64 {
             return false;
         }
         // Even draining, we need at least one full candidate frame and the target.
-        if cmax < cmin || target + ss > avail_end {
+        if cmax < cmin || target + hop > avail_end {
             return false;
         }
 
@@ -327,18 +347,26 @@ impl TimeStretch {
             return false;
         }
 
+        // Pre-slice the input so that bound checks are done once
+        // and have to have less calculations in the loops.
+        let input_start_idx = (target - origin) * ch;
+        let target_len = hop * ch;
+        let input_slice = &input[input_start_idx..input_start_idx + target_len];
+
         // Pick the source frame whose leading overlap best correlates with the
         // natural continuation of the previous frame (input at `target`).
         let mut best = lo as usize;
         let mut best_score = f32::NEG_INFINITY;
         for cand in lo..=hi {
             let cand = cand as usize;
+            let cand_start_idx = (cand - origin) * ch;
+            let cand_slice = &input[cand_start_idx..cand_start_idx + target_len];
             let mut score = 0.0f32;
-            for i in 0..ss {
-                for c in 0..ch {
-                    score += self.at(cand + i, c) * self.at(target + i, c);
-                }
+
+            for i in 0..target_len {
+                score += cand_slice[i] * input_slice[i];
             }
+
             if score > best_score {
                 best_score = score;
                 best = cand;
@@ -346,17 +374,32 @@ impl TimeStretch {
         }
         let src = best;
 
+        // Pre-slice the input so that bound checks are done once
+        // and have less indexing calculations in the loop.
+        let input_start_idx = (src - origin) * ch;
+        let src_slice_first = &input[input_start_idx..input_start_idx + target_len];
+        let src_slice_second =
+            &input[input_start_idx + target_len..input_start_idx + target_len * 2];
+        let window_slice = &self.window[..hop];
+
         // Overlap-add the frame's first half onto the open tail, emit it, and
         // keep the windowed second half as the new tail.
-        for i in 0..ss {
+        for (i, win) in window_slice.iter().enumerate() {
+            let base_idx = i * ch;
             for c in 0..ch {
-                let v = self.accum[i * ch + c] + self.at(src + i, c) * self.window[i];
+                let sample_idx = base_idx + c;
+                let v = self.accum[sample_idx] + src_slice_first[sample_idx] * win;
                 self.output.push(v);
             }
         }
-        for i in 0..ss {
+
+        let window_slice = &self.window[hop..hop * 2];
+
+        for (i, win) in window_slice.iter().enumerate() {
+            let base_idx = i * ch;
             for c in 0..ch {
-                self.accum[i * ch + c] = self.at(src + ss + i, c) * self.window[ss + i];
+                let sample_idx = base_idx + c;
+                self.accum[sample_idx] = src_slice_second[sample_idx] * win;
             }
         }
 
