@@ -87,6 +87,9 @@ impl Default for Config {
     }
 }
 
+/// Custom Epsilon, as [`f32::EPSILON`] may in some cases be too small, when the samples are near 0.0.
+const EPSILON: f32 = 1e-9;
+
 /// A streaming, pitch-preserving time-stretcher over interleaved `f32` frames.
 ///
 /// See the [crate docs](crate) for the algorithm and a usage example.
@@ -357,15 +360,29 @@ impl TimeStretch {
         // natural continuation of the previous frame (input at `target`).
         let mut best = lo as usize;
         let mut best_score = f32::NEG_INFINITY;
+
+        // Calculate target energy once
+        let target_energy = input_slice.iter().map(|&x| x * x).sum::<f32>().sqrt();
+
         for cand in lo..=hi {
             let cand = cand as usize;
             let cand_start_idx = (cand - origin) * ch;
             let cand_slice = &input[cand_start_idx..cand_start_idx + target_len];
-            let mut score = 0.0f32;
+
+            let mut dot_product = 0.0f32;
+            let mut cand_energy = 0.0f32;
 
             for i in 0..target_len {
-                score += cand_slice[i] * input_slice[i];
+                let c_sample = cand_slice[i];
+                let t_sample = input_slice[i];
+
+                dot_product += c_sample * t_sample;
+                cand_energy += c_sample * c_sample;
             }
+
+            // Normalized Cross-Correlation (Cosine Similarity)
+            // Adds a small Epsilon to avoid divide by zero.
+            let score = dot_product / (cand_energy.sqrt() * target_energy + EPSILON);
 
             if score > best_score {
                 best_score = score;
