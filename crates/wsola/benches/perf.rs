@@ -38,12 +38,13 @@ fn speed(c: &mut Criterion) {
                 let mut ts = TimeStretch::new(SAMPLE_RATE, CHANNELS).unwrap();
                 ts.set_tempo(1.0);
                 ts.push(&data);
+                let buf = vec![0.0f32; ts.min_output_buff_size() * 4].into_boxed_slice();
 
-                ts
+                (ts, buf)
             },
-            |mut ts| {
+            |(mut ts, mut buf)| {
                 // Test the step convertion; dont test the output speed.
-                let _ = ts.pull(usize::MAX);
+                while let Ok(_written) = ts.pull(&mut buf) {}
             },
             BatchSize::SmallInput,
         )
@@ -55,12 +56,13 @@ fn speed(c: &mut Criterion) {
                 let mut ts = TimeStretch::new(SAMPLE_RATE, CHANNELS).unwrap();
                 ts.set_tempo(2.0);
                 ts.push(&data);
+                let buf = vec![0.0f32; ts.min_output_buff_size() * 4].into_boxed_slice();
 
-                ts
+                (ts, buf)
             },
-            |mut ts| {
+            |(mut ts, mut buf)| {
                 // Test the step convertion; dont test the output speed.
-                let _ = ts.pull(usize::MAX);
+                while let Ok(_written) = ts.pull(&mut buf) {}
             },
             BatchSize::SmallInput,
         )
@@ -72,12 +74,13 @@ fn speed(c: &mut Criterion) {
                 let mut ts = TimeStretch::new(SAMPLE_RATE, CHANNELS).unwrap();
                 ts.set_tempo(0.5);
                 ts.push(&data);
+                let buf = vec![0.0f32; ts.min_output_buff_size() * 4].into_boxed_slice();
 
-                ts
+                (ts, buf)
             },
-            |mut ts| {
+            |(mut ts, mut buf)| {
                 // Test the step convertion; dont test the output speed.
-                let _ = ts.pull(usize::MAX);
+                while let Ok(_written) = ts.pull(&mut buf) {}
             },
             BatchSize::SmallInput,
         )

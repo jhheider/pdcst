@@ -5,7 +5,7 @@
 
 use std::num::{NonZeroU16, NonZeroU32};
 
-use wsola::{Config, TimeStretch, stretch};
+use wsola::{Config, Error, TimeStretch, stretch};
 
 const SAMPLE_RATE: NonZeroU32 = NonZeroU32::new(44_100).unwrap();
 const MONO_CHANNEL: NonZeroU16 = NonZeroU16::new(1).unwrap();
@@ -136,14 +136,20 @@ fn streaming_equals_one_shot() {
     let chunks = [17usize, 1024, 4096, 99, 8192, 333];
     let mut pos = 0;
     let mut ci = 0;
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size() * 4];
     while pos < input.len() {
         let n = chunks[ci % chunks.len()].min(input.len() - pos);
         ts.push(&input[pos..pos + n]);
         pos += n;
         ci += 1;
-        streamed.extend(ts.pull(500));
+        if let Ok(written) = ts.pull(&mut tmp) {
+            streamed.extend_from_slice(&tmp[..written]);
+        }
     }
-    streamed.extend(ts.flush());
+    ts.set_draining();
+    while let Ok(written) = ts.pull(&mut tmp) {
+        streamed.extend_from_slice(&tmp[..written]);
+    }
 
     assert_eq!(
         streamed.len(),
@@ -189,11 +195,28 @@ fn reset_clears_state_and_resumes_like_new() {
     let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
     ts.set_tempo(1.5);
     ts.push(&a);
-    let _ = ts.pull(usize::MAX);
+    assert!(!ts.is_draining());
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size()].into_boxed_slice();
+    while let Ok(written) = ts.pull(&mut tmp)
+        && written > 0
+    {}
+    assert!(!ts.is_draining());
     ts.reset();
+    assert!(!ts.is_draining());
     ts.push(&b);
-    let mut after_reset: Vec<f32> = ts.pull(usize::MAX).collect();
-    after_reset.extend(ts.flush());
+    let mut after_reset = Vec::new();
+    while let Ok(written) = ts.pull(&mut tmp)
+        && written > 0
+    {
+        after_reset.extend_from_slice(&tmp[..written]);
+    }
+    assert!(!ts.is_draining());
+    ts.set_draining();
+    assert!(ts.is_draining());
+    while let Ok(written) = ts.pull(&mut tmp) {
+        after_reset.extend_from_slice(&tmp[..written]);
+    }
+    assert!(!ts.is_draining());
 
     let fresh = stretch(&b, SAMPLE_RATE, MONO_CHANNEL, 1.5).unwrap();
     assert_eq!(after_reset.len(), fresh.len());
@@ -208,55 +231,154 @@ fn reset_clears_state_and_resumes_like_new() {
 fn tempo_change_mid_stream_is_smooth() {
     let input = sine(400.0, 2.0);
     let mut ts = TimeStretch::with_config(SAMPLE_RATE, MONO_CHANNEL, Config::default()).unwrap();
-    let mut out = Vec::new();
+    let mut out: Vec<f32> = Vec::new();
     ts.push(&input);
+
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size()].into_boxed_slice();
     // First half at 1.0, then switch to 1.5.
-    out.extend(ts.pull(input.len() / 3));
+    while out.len() < input.len() / 3 {
+        let written = ts.pull(&mut tmp).unwrap();
+        out.extend_from_slice(&tmp[..written]);
+    }
     ts.set_tempo(1.5);
-    out.extend(ts.pull(usize::MAX));
-    out.extend(ts.flush());
+    while let Ok(written) = ts.pull(&mut tmp)
+        && written > 0
+    {
+        out.extend_from_slice(&tmp[..written]);
+    }
+    ts.set_draining();
+    while let Ok(written) = ts.pull(&mut tmp) {
+        out.extend_from_slice(&tmp[..written]);
+    }
+
     assert!(out.iter().all(|s| s.is_finite()));
     // Pitch still 400 Hz despite the tempo change.
     assert!((dominant_freq(&out) - 400.0).abs() / 400.0 < 0.06);
 }
 
 #[test]
-fn min_output_size_matches_output_generated() {
+fn min_output_buff_size_actually_is_min() {
     // Setup
     let input = sine(400.0, 2.0);
     let mut ts = TimeStretch::with_config(SAMPLE_RATE, MONO_CHANNEL, Config::default()).unwrap();
-    let mut out = Vec::new();
-    let min_sampels = ts.min_output_size();
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size()];
+    let min_sampels = ts.min_output_buff_size();
     ts.push(&input);
+    ts.set_draining();
 
     // Test
     let mut iterations = 0;
-    loop {
-        assert_eq!(ts.available(), 0);
-        out.extend(ts.pull(1));
-
-        if out.is_empty() {
+    while let Ok(written) = ts.pull(&mut tmp) {
+        if written == 0 {
             break;
         }
 
-        assert_eq!(out.len() + ts.available(), min_sampels);
-        let _ = ts.pull(ts.available());
-        out.clear();
+        assert_eq!(written, min_sampels);
         iterations += 1;
     }
 
     // sanity check that the asserts actually ran for some time
-    assert_eq!(iterations, 131);
+    assert_eq!(iterations, 134);
+}
 
-    let _ = ts.pull(ts.available());
-    out.clear();
+#[test]
+fn min_output_buff_size_can_be_multiple() {
+    // Setup
+    let input = sine(400.0, 2.0);
+    let mut ts = TimeStretch::with_config(SAMPLE_RATE, MONO_CHANNEL, Config::default()).unwrap();
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size() * 2].into_boxed_slice();
+    let min_sampels = ts.min_output_buff_size();
+    ts.push(&input);
+    ts.set_draining();
 
-    // Test flush
-    assert_eq!(ts.available(), 0);
-    out.extend(ts.flush());
-    // There are at least 1 frame generated by "step" and 1 by the "primed" filler,
-    // but for this exact input and config, 3 get generated due to search.
-    assert_eq!(out.len(), min_sampels * 3);
+    // Test
+    let mut iterations = 0;
+    while let Ok(written) = ts.pull(&mut tmp) {
+        if written < tmp.len() {
+            // even writing the last chunk(s), there should always be at least a full "frame" of samples
+            assert!(written >= min_sampels);
+            break;
+        }
+
+        assert_eq!(written, tmp.len());
+        iterations += 1;
+    }
+
+    // sanity check that the asserts actually ran for some time
+    assert_eq!(iterations, 67);
+}
+
+#[test]
+fn invalid_pull_buf_sizes() {
+    let mut ts = TimeStretch::with_config(SAMPLE_RATE, MONO_CHANNEL, Config::default()).unwrap();
+
+    // 0-sized buffer
+    {
+        let mut tmp = vec![0.0f32; 0].into_boxed_slice();
+        assert_eq!(
+            ts.pull(&mut tmp).unwrap_err(),
+            Error::NotEnoughBuffer {
+                given: 0,
+                necessary: ts.min_output_buff_size()
+            }
+        );
+    }
+    // half length buffer
+    {
+        let mut tmp = vec![0.0f32; ts.min_output_buff_size() / 2].into_boxed_slice();
+        assert_eq!(
+            ts.pull(&mut tmp).unwrap_err(),
+            Error::NotEnoughBuffer {
+                given: ts.min_output_buff_size() / 2,
+                necessary: ts.min_output_buff_size()
+            }
+        );
+    }
+    // buffer len - 1
+    {
+        let mut tmp = vec![0.0f32; ts.min_output_buff_size() - 1].into_boxed_slice();
+        assert_eq!(
+            ts.pull(&mut tmp).unwrap_err(),
+            Error::NotEnoughBuffer {
+                given: ts.min_output_buff_size() - 1,
+                necessary: ts.min_output_buff_size()
+            }
+        );
+    }
+
+    // not multiple (+1)
+    {
+        let mut tmp = vec![0.0f32; ts.min_output_buff_size() + 1].into_boxed_slice();
+        assert_eq!(
+            ts.pull(&mut tmp).unwrap_err(),
+            Error::BufferNotAligned {
+                given: ts.min_output_buff_size() + 1,
+                next_align: ts.min_output_buff_size() * 2
+            }
+        );
+    }
+    // slightly below 2 times
+    {
+        let mut tmp = vec![0.0f32; ts.min_output_buff_size() * 2 - 1].into_boxed_slice();
+        assert_eq!(
+            ts.pull(&mut tmp).unwrap_err(),
+            Error::BufferNotAligned {
+                given: ts.min_output_buff_size() * 2 - 1,
+                next_align: ts.min_output_buff_size() * 2
+            }
+        );
+    }
+    // slightly above 2 times
+    {
+        let mut tmp = vec![0.0f32; ts.min_output_buff_size() * 2 + 1].into_boxed_slice();
+        assert_eq!(
+            ts.pull(&mut tmp).unwrap_err(),
+            Error::BufferNotAligned {
+                given: ts.min_output_buff_size() * 2 + 1,
+                next_align: ts.min_output_buff_size() * 3
+            }
+        );
+    }
 }
 
 #[test]
@@ -265,14 +387,17 @@ fn output_energy_stability() {
     let input = sine(440.0, 3.0);
     let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
     ts.set_tempo(0.85);
+    ts.set_draining();
     ts.push(&input);
 
     let mut output = Vec::new();
-    let hop_size = ts.min_output_size();
+    let hop_size = ts.min_output_buff_size();
 
     // Generate
-    output.extend(ts.pull(usize::MAX));
-    output.extend(ts.flush());
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size()];
+    while let Ok(written) = ts.pull(&mut tmp) {
+        output.extend_from_slice(&tmp[..written]);
+    }
 
     // We skip priming and flushing hop, so we need at least one more
     assert!(output.len() > hop_size * 3);
@@ -301,20 +426,91 @@ fn output_energy_stability() {
 
 #[test]
 fn can_pull_without_panic_after_flush() {
+    // Setup
     let input = sine(440.0, 2.0);
     let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
     ts.set_tempo(1.0);
     ts.push(&input);
 
     // Generate
-    let _ = ts.pull(usize::MAX);
-    let _ = ts.flush();
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size()];
+    while let Ok(written) = ts.pull(&mut tmp)
+        && written > 0
+    {}
+    ts.set_draining();
+    while let Ok(written) = ts.pull(&mut tmp)
+        && written > 0
+    {}
 
-    assert_eq!(ts.available(), 0);
+    // Test
     assert_eq!(ts.buffered(), 0);
 
-    let count = ts.pull(usize::MAX).count();
-    assert_eq!(count, 0);
-    let count = ts.flush().count();
-    assert_eq!(count, 0);
+    let mut iterations = 0;
+    while let Ok(written) = ts.pull(&mut tmp)
+        && written > 0
+    {
+        iterations += 1;
+    }
+    assert_eq!(iterations, 0);
+    ts.set_draining();
+    while let Ok(written) = ts.pull(&mut tmp)
+        && written > 0
+    {
+        iterations += 1;
+    }
+    assert_eq!(iterations, 0);
+}
+
+#[test]
+fn pull_is_not_infinite() {
+    // Setup
+    let input = sine(440.0, 2.0);
+    let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
+    ts.set_tempo(1.0);
+    ts.push(&input);
+
+    // Generate
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size()];
+    while let Ok(written) = ts.pull(&mut tmp)
+        && written > 0
+    {}
+
+    // Test
+    while let Ok(_written) = ts.pull(&mut tmp) {}
+}
+
+#[test]
+fn draining_at_different_times_results_in_same() {
+    // Setup
+    let input = sine(440.0, 2.0);
+    let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
+    ts.set_tempo(1.0);
+    ts.push(&input);
+    ts.set_draining();
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size()].into_boxed_slice();
+
+    // Generate 1
+    let mut out_1: Vec<f32> = Vec::new();
+    while let Ok(written) = ts.pull(&mut tmp) {
+        out_1.extend(&tmp[..written]);
+    }
+
+    // Generate 2
+    let mut out_2 = Vec::new();
+    let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
+    ts.set_tempo(1.0);
+    ts.push(&input);
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size()].into_boxed_slice();
+    while let Ok(written) = ts.pull(&mut tmp) {
+        out_2.extend(&tmp[..written]);
+    }
+    ts.set_draining();
+    while let Ok(written) = ts.pull(&mut tmp) {
+        out_2.extend(&tmp[..written]);
+    }
+
+    // Test
+    assert_eq!(out_1.len(), 88708);
+    assert_eq!(out_2.len(), 88708);
+    assert_eq!(out_1, out_2);
 }

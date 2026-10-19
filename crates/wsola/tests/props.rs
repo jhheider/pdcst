@@ -80,11 +80,17 @@ proptest! {
         let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
         ts.set_tempo(tempo);
         let mut streamed = Vec::new();
+        let mut tmp = vec![0.0f32; ts.min_output_buff_size()].into_boxed_slice();
         for part in samples.chunks(chunk) {
             ts.push(part);
-            streamed.extend(ts.pull(256));
+            if let Ok(written) = ts.pull(&mut tmp) {
+                streamed.extend_from_slice(&tmp[..written]);
+            }
         }
-        streamed.extend(ts.flush());
+        ts.set_draining();
+        while let Ok(written) = ts.pull(&mut tmp) {
+            streamed.extend_from_slice(&tmp[..written]);
+        }
 
         prop_assert_eq!(streamed.len(), one_shot.len());
         for (a, b) in streamed.iter().zip(&one_shot) {
