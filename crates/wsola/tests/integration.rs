@@ -298,3 +298,23 @@ fn output_energy_stability() {
         );
     }
 }
+
+#[test]
+fn can_pull_without_panic_after_flush() {
+    let input = sine(440.0, 2.0);
+    let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
+    ts.set_tempo(1.0);
+    ts.push(&input);
+
+    // Generate
+    let _ = ts.pull(usize::MAX);
+    let _ = ts.flush();
+
+    assert_eq!(ts.available(), 0);
+    assert_eq!(ts.buffered(), 0);
+
+    let count = ts.pull(usize::MAX).count();
+    assert_eq!(count, 0);
+    let count = ts.flush().count();
+    assert_eq!(count, 0);
+}

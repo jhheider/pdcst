@@ -230,6 +230,7 @@ impl TimeStretch {
         self.draining = true;
         while self.step() {}
 
+        // only if we are primed did a "step" run and needs cleanup
         if self.primed {
             let ch = self.channels_usize();
             for i in 0..self.hop {
@@ -238,7 +239,13 @@ impl TimeStretch {
                     self.output.push(self.accum[base_accum_idx + c]);
                 }
             }
+            // practically everything "reset" does, but without output clearing
+            self.input.clear();
+            self.origin = 0;
             self.primed = false;
+            self.draining = false;
+            self.ideal = 0.0;
+            self.last_src = 0;
             self.accum.fill(0.0);
         }
 
