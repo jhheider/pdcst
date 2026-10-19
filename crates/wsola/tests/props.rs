@@ -2,13 +2,40 @@
 //! never produce non-finite or runaway samples, must keep length roughly in
 //! step with tempo, and must give the same result streamed as in one shot.
 
-use std::num::{NonZeroU16, NonZeroU32};
+use std::{
+    fmt::Debug,
+    num::{NonZeroU16, NonZeroU32},
+    ops::Deref,
+};
 
 use proptest::prelude::*;
 use wsola::{TimeStretch, stretch};
 
 const SAMPLE_RATE: NonZeroU32 = NonZeroU32::new(44_100).unwrap();
 const MONO_CHANNEL: NonZeroU16 = NonZeroU16::new(1).unwrap();
+
+/// Helper `Vec` that implements a short Debug representation.
+///
+/// This is necessary, as otherwise proptest will write out all the samples
+/// in the vec to the "*.proptest-regressions" file, which at this size
+/// and default proptest config, only allows 2 failure cases to be logged
+/// before triggering size restrictions.
+#[derive(Clone, PartialEq)]
+struct CompactVec(pub Vec<f32>);
+
+impl Debug for CompactVec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CompactVec {{ len: {} }}", self.0.len())
+    }
+}
+
+impl Deref for CompactVec {
+    type Target = Vec<f32>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 proptest! {
     // Each case runs the O(n) algorithm over up to ~0.2 s of audio; keep the
@@ -17,7 +44,7 @@ proptest! {
 
     #[test]
     fn never_nonfinite_or_runaway(
-        samples in proptest::collection::vec(-1.0f32..=1.0f32, 0..8000),
+        samples in proptest::collection::vec(-1.0f32..=1.0f32, 0..8000).prop_map(CompactVec),
         tempo in 0.25f32..=4.0f32,
     ) {
         let out = stretch(&samples, SAMPLE_RATE, MONO_CHANNEL, tempo).unwrap();
@@ -44,7 +71,7 @@ proptest! {
 
     #[test]
     fn streaming_matches_one_shot(
-        samples in proptest::collection::vec(-1.0f32..=1.0f32, 0..6000),
+        samples in proptest::collection::vec(-1.0f32..=1.0f32, 0..6000).prop_map(CompactVec),
         tempo in 0.5f32..=2.0f32,
         chunk in 1usize..2000,
     ) {
