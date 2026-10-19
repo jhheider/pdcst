@@ -258,3 +258,43 @@ fn min_output_size_matches_output_generated() {
     // but for this exact input and config, 3 get generated due to search.
     assert_eq!(out.len(), min_sampels * 3);
 }
+
+#[test]
+fn output_energy_stability() {
+    // Setup
+    let input = sine(440.0, 3.0);
+    let mut ts = TimeStretch::new(SAMPLE_RATE, MONO_CHANNEL).unwrap();
+    ts.set_tempo(0.85);
+    ts.push(&input);
+
+    let mut output = Vec::new();
+    let hop_size = ts.min_output_size();
+
+    // Generate
+    output.extend(ts.pull(usize::MAX));
+    output.extend(ts.flush());
+
+    // We skip priming and flushing hop, so we need at least one more
+    assert!(output.len() > hop_size * 3);
+
+    // Actually run the test
+    let mut frame_energies = Vec::new();
+
+    for chunk in output.chunks_exact(hop_size) {
+        let rms = rms(chunk);
+        frame_energies.push(rms);
+    }
+
+    // Skip priming and draining hop
+    let steady_state_energies = &frame_energies[1..frame_energies.len() - 1];
+
+    let avg_energy = steady_state_energies.iter().sum::<f32>() / steady_state_energies.len() as f32;
+
+    for (i, energy) in steady_state_energies.iter().enumerate() {
+        let ratio = energy / avg_energy;
+        assert!(
+            ratio > 0.7 && ratio < 1.3,
+            "Frame {i} energy anomaly: ratio falls outside of average: {ratio:.3}"
+        );
+    }
+}
