@@ -12,7 +12,6 @@
 
 use rodio::source::SeekError;
 use rodio::{ChannelCount, SampleRate, Source};
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
@@ -31,8 +30,12 @@ pub struct WsolaSource<S> {
     position_ms: Arc<AtomicU64>,
     /// Per-channel input frames consumed so far.
     in_frames: u64,
-    out: VecDeque<f32>,
     done: bool,
+
+    /// Temporary output scratch buffer
+    out: Box<[f32]>,
+    out_read_idx: usize,
+    out_written_idx: usize,
 }
 
 impl<S: Source> WsolaSource<S> {
@@ -45,13 +48,16 @@ impl<S: Source> WsolaSource<S> {
             .expect("decoder reports nonzero sample rate and channels");
         let last_tempo = f32::from_bits(tempo.load(Ordering::Relaxed));
         ts.set_tempo(last_tempo);
+        let out = vec![0.0f32; ts.min_output_buff_size() * 4].into_boxed_slice();
         Self {
             inner,
             ts,
             tempo,
             position_ms,
             in_frames: 0,
-            out: VecDeque::new(),
+            out,
+            out_read_idx: 0,
+            out_written_idx: 0,
             done: false,
         }
     }
@@ -73,18 +79,20 @@ impl<S: Source> WsolaSource<S> {
 
         if buf.is_empty() {
             self.done = true;
-            let tail = self.ts.flush();
-            self.out.extend(tail);
-            return;
+            self.ts.set_draining();
+        } else {
+            self.in_frames += (buf.len() / ch) as u64;
+            self.position_ms.store(
+                self.in_frames * 1000 / self.ts.sample_rate().get() as u64,
+                Ordering::Relaxed,
+            );
+            self.ts.push(&buf);
         }
 
-        self.in_frames += (buf.len() / ch) as u64;
-        self.position_ms.store(
-            self.in_frames * 1000 / self.ts.sample_rate().get() as u64,
-            Ordering::Relaxed,
-        );
-        self.ts.push(&buf);
-        self.out.extend(self.ts.pull(usize::MAX));
+        if let Ok(written) = self.ts.pull(&mut self.out) {
+            self.out_written_idx = written;
+            self.out_read_idx = 0;
+        }
     }
 }
 
@@ -93,10 +101,13 @@ impl<S: Source> Iterator for WsolaSource<S> {
 
     fn next(&mut self) -> Option<f32> {
         loop {
-            if let Some(s) = self.out.pop_front() {
-                return Some(s);
+            if self.out_read_idx < self.out_written_idx {
+                let idx = self.out_read_idx;
+                self.out_read_idx += 1;
+                return Some(self.out[idx]);
             }
-            if self.done {
+
+            if self.done && !self.ts.is_draining() {
                 return None;
             }
             self.refill();
@@ -127,7 +138,8 @@ impl<S: Source> Source for WsolaSource<S> {
         self.ts.reset();
         let t = f32::from_bits(self.tempo.load(Ordering::Relaxed));
         self.ts.set_tempo(t);
-        self.out.clear();
+        self.out_read_idx = 0;
+        self.out_written_idx = 0;
         self.done = false;
         self.in_frames = (pos.as_secs_f64() * self.ts.sample_rate().get() as f64) as u64;
         self.position_ms

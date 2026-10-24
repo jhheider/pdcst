@@ -24,7 +24,7 @@
 //!
 //! [`TimeStretch`] is a streaming processor over interleaved `f32` frames. Feed
 //! decoder output with [`push`](TimeStretch::push), pull stretched frames for
-//! the sink with [`pull`](TimeStretch::pull), and [`flush`](TimeStretch::flush)
+//! the sink with [`pull`](TimeStretch::pull), and [`set_draining`](TimeStretch::set_draining)
 //! at end of stream. Tempo is settable mid-stream.
 //!
 //! ```
@@ -35,8 +35,13 @@
 //! let mut ts = TimeStretch::new(sr, ch).unwrap();
 //! ts.set_tempo(1.5); // 1.5x faster, same pitch
 //! ts.push(&[0.0f32; 4096]); // interleaved stereo frames from the decoder
-//! let out = ts.pull(1024); // interleaved frames for the output sink
-//! # let _ = out;
+//! let mut tmp = vec![0.0f32; ts.min_output_buff_size()];
+//! let written = ts.pull(&mut tmp); // interleaved frames for the output sink
+//!
+//! // flush the final samples
+//! ts.set_draining();
+//! let written = ts.pull(&mut tmp);
+//! # let _ = written;
 //! ```
 //!
 //! For a whole buffer at once, use the [`stretch`] convenience function.
@@ -55,6 +60,19 @@ pub enum Error {
         /// The configured channel count.
         channels: NonZeroU16,
     },
+
+    /// The given buffer was not at least the necessary size, so nothing could be processed.
+    #[error("Given buffer was {given}, but minimal required is {necessary}")]
+    NotEnoughBuffer { given: usize, necessary: usize },
+
+    /// The given buffer is not aligned to `necessary`. This is necessary for optimization.
+    #[error(
+        "Given buffer was {given}, but was not aligned. Next alignment point would be at {next_align}"
+    )]
+    BufferNotAligned { given: usize, next_align: usize },
+
+    #[error("Nothing could be written as there is not enough input")]
+    NotEnoughInput,
 }
 
 /// Convenience alias for results from this crate.
@@ -119,8 +137,6 @@ pub struct TimeStretch {
     ideal: f64,        // next ideal source position (per-channel absolute)
     last_src: usize,   // source of the previously placed frame
     accum: Box<[f32]>, // open output tail (interleaved, hop * channels)
-
-    output: Vec<f32>,
 }
 
 impl TimeStretch {
@@ -162,7 +178,6 @@ impl TimeStretch {
             ideal: 0.0,
             last_src: 0,
             accum: vec![0.0; hop * channels.get() as usize].into_boxed_slice(),
-            output: Vec::new(),
         })
     }
 
@@ -196,52 +211,95 @@ impl TimeStretch {
         self.input.extend_from_slice(samples);
     }
 
-    /// Interleaved output samples ready to pull right now.
-    pub fn available(&self) -> usize {
-        self.output.len()
-    }
-
     /// Per-channel input samples buffered but not yet consumed.
     pub fn buffered(&self) -> usize {
         self.input.len() / self.channels_usize()
     }
 
-    /// Pull up to `max` interleaved output samples, producing more from buffered
-    /// input as needed. Returns a whole number of frames (a multiple of the
-    /// channel count), fewer than `max` if not enough input has arrived yet.
-    pub fn pull(&mut self, max: usize) -> impl Iterator<Item = f32> {
-        while self.output.len() < max {
-            if !self.step() {
-                break;
+    /// Process samples into `out` buffer.
+    /// The buffer needs to be at least [`min_output_buff_size`](Self::min_output_buff_size) and must be a multiple of it.
+    ///
+    /// If [`set_draining`](Self::set_draining) was called, this will also flush out the final data, if it fits within the buffer.
+    /// After a successful drain, the instance can be immediately reused as if newly created.
+    ///
+    /// Returns the number of bytes written to the output buffer, which should always be a multiple of [`min_output_buff_size`](Self::min_output_buff_size).
+    ///
+    /// # Errors
+    ///
+    /// - Buffer is too small for even one run
+    /// - Buffer is not a multiple of [`min_output_buff_size`](Self::min_output_buff_size)
+    /// - There is not enough input
+    pub fn pull(&mut self, out: &mut [f32]) -> Result<usize> {
+        let mut total_written = 0;
+        let necessary = self.min_output_buff_size();
+        let out_len = out.len();
+
+        if out_len < necessary {
+            return Err(Error::NotEnoughBuffer {
+                necessary,
+                given: out_len,
+            });
+        } else if !out_len.is_multiple_of(necessary) {
+            return Err(Error::BufferNotAligned {
+                given: out_len,
+                next_align: out_len.next_multiple_of(necessary),
+            });
+        }
+
+        loop {
+            let written = self.step(&mut out[total_written..total_written + necessary]);
+            total_written += written;
+
+            // No more space to write.
+            if total_written >= out_len {
+                return Ok(total_written);
+            }
+
+            // At this point we know that there is no more data "step" can produce,
+            // and we also know that the output buffer still has at least 1 "necessary" length,
+            // which is enough to write the tail data.
+            if written == 0 {
+                // Flush out all the remaining tail data if draining.
+                if self.draining && self.primed {
+                    let ch = self.channels_usize();
+                    for i in 0..self.hop {
+                        let base_accum_idx = i * ch;
+                        for c in 0..ch {
+                            out[total_written] = self.accum[base_accum_idx + c];
+                            total_written += 1;
+                        }
+                    }
+
+                    self.reset();
+                }
+                self.draining = false;
+
+                if total_written == 0 {
+                    return Err(Error::NotEnoughInput);
+                }
+
+                return Ok(total_written);
             }
         }
-        let ch = self.channels_usize();
-        let n = max.min(self.output.len()) / ch * ch;
-        self.output.drain(0..n)
     }
 
-    /// Finish the stream: produce all remaining whole frames, emit the final
-    /// overlap tail, and return everything still buffered. After `flush` the
-    /// stretcher is drained; pushing more input resumes cleanly.
-    pub fn flush(&mut self) -> impl Iterator<Item = f32> {
+    /// Determine if the instance is currently in draining mode.
+    pub fn is_draining(&self) -> bool {
+        self.draining
+    }
+
+    /// Set the instance to be in draining mode.
+    ///
+    /// WARNING:
+    /// Only set into draining mode once you know you have pushed all the data
+    /// that will ever be available before calling [`pull`](Self::pull) again!
+    pub fn set_draining(&mut self) {
         self.draining = true;
-        while self.step() {}
+    }
 
-        if self.primed {
-            let ch = self.channels_usize();
-            for i in 0..self.hop {
-                let base_accum_idx = i * ch;
-                for c in 0..ch {
-                    self.output.push(self.accum[base_accum_idx + c]);
-                }
-            }
-            self.primed = false;
-            self.accum.fill(0.0);
-        }
-
-        // Resume cleanly if the caller pushes more input after a flush.
-        self.draining = false;
-        self.output.drain(..)
+    /// The minimal output that will be generated by a single [`pull`](Self::pull) call if there is not enough available.
+    pub fn min_output_buff_size(&self) -> usize {
+        self.hop * self.channels_usize()
     }
 
     /// Discard all buffered input and output and reset the stretch state, as if
@@ -249,7 +307,6 @@ impl TimeStretch {
     /// this after seeking the upstream source to a new position.
     pub fn reset(&mut self) {
         self.input.clear();
-        self.output.clear();
         self.origin = 0;
         self.primed = false;
         self.draining = false;
@@ -273,28 +330,33 @@ impl TimeStretch {
         self.hop as f64 * self.tempo as f64
     }
 
-    /// Place one output frame if enough input is buffered. Returns false when it
-    /// needs more input.
-    fn step(&mut self) -> bool {
+    /// Process exactly one frame, if the input data is enough.
+    ///
+    /// Returns bytes written to the `out` buffer, which should always match [`min_output_buff_size`](Self::min_output_buff_size).
+    /// Or `0` if nothing was written (not enough input data)
+    fn step(&mut self, out: &mut [f32]) -> usize {
+        // The last written to index into "out".
+        // This should be incremented directly after each write,
+        // which then will also serve as the written length.
+        let mut last_write_idx = 0;
+
         let ch = self.channels_usize();
         let hop = self.hop;
+        let target_len = self.min_output_buff_size();
         let frame = self.frame;
         let avail_end = self.avail_end();
-
-        self.output.reserve(hop * ch);
 
         let origin = self.origin;
         let input = &self.input;
 
         if !self.primed {
             if origin + frame > avail_end {
-                return false;
+                return 0;
             }
 
             // Pre-slice the input so that bound checks are done once
             // and have to have less calculations in the loops.
             let input_start_idx = origin * ch;
-            let target_len = hop * ch;
             let input_slice = &input[input_start_idx..input_start_idx + target_len];
             let window_slice = &self.window[..hop];
 
@@ -302,7 +364,8 @@ impl TimeStretch {
                 let base_idx = i * ch;
                 for c in 0..ch {
                     let sample_idx = base_idx + c;
-                    self.output.push(input_slice[sample_idx] * win);
+                    out[last_write_idx] = input_slice[sample_idx] * win;
+                    last_write_idx += 1;
                 }
             }
 
@@ -323,7 +386,8 @@ impl TimeStretch {
             self.ideal = origin as f64 + self.analysis_hop();
             self.primed = true;
             self.compact();
-            return true;
+
+            return last_write_idx;
         }
 
         let base = self.ideal.round() as i64;
@@ -337,23 +401,22 @@ impl TimeStretch {
         // search sees the same full candidate range it would in one shot.
         let needed_end = (base + self.search as i64 + frame as i64).max((target + hop) as i64);
         if !self.draining && needed_end > avail_end as i64 {
-            return false;
+            return 0;
         }
         // Even draining, we need at least one full candidate frame and the target.
         if cmax < cmin || target + hop > avail_end {
-            return false;
+            return 0;
         }
 
         let lo = (base - self.search as i64).max(cmin);
         let hi = (base + self.search as i64).min(cmax);
         if hi < lo {
-            return false;
+            return 0;
         }
 
         // Pre-slice the input so that bound checks are done once
         // and have to have less calculations in the loops.
         let input_start_idx = (target - origin) * ch;
-        let target_len = hop * ch;
         let input_slice = &input[input_start_idx..input_start_idx + target_len];
 
         // Pick the source frame whose leading overlap best correlates with the
@@ -406,7 +469,8 @@ impl TimeStretch {
             for c in 0..ch {
                 let sample_idx = base_idx + c;
                 let v = self.accum[sample_idx] + src_slice_first[sample_idx] * win;
-                self.output.push(v);
+                out[last_write_idx] = v;
+                last_write_idx += 1;
             }
         }
 
@@ -423,7 +487,8 @@ impl TimeStretch {
         self.last_src = src;
         self.ideal += self.analysis_hop();
         self.compact();
-        true
+
+        last_write_idx
     }
 
     /// Drop input we can never read again, in batches to keep it amortized O(n).
@@ -448,7 +513,7 @@ fn hann(n: usize) -> Vec<f32> {
 
 /// Time-stretch a whole interleaved buffer in one call: pitch-preserved tempo
 /// change by `tempo`. Equivalent to `new` + `set_tempo` + `push` + `pull` +
-/// `flush`, and a good first port of call for offline use and tests.
+/// `set_draining`, and a good first port of call for offline use and tests.
 ///
 /// # Errors
 /// [`Error::UnalignedInput`] if `samples` is not a whole number of frames.
@@ -479,8 +544,17 @@ pub fn stretch(
     let mut ts = TimeStretch::new(sample_rate, channels)?;
     ts.set_tempo(tempo);
     ts.push(samples);
-    let mut out: Vec<f32> = ts.pull(usize::MAX).collect();
-    out.extend(ts.flush());
+    ts.set_draining();
+
+    let mut out = Vec::new();
+    let mut tmp = vec![0.0f32; ts.min_output_buff_size() * 4].into_boxed_slice();
+
+    while let Ok(written) = ts.pull(&mut tmp)
+        && written > 0
+    {
+        out.extend_from_slice(&tmp[..written]);
+    }
+
     Ok(out)
 }
 
