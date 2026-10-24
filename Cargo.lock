@@ -2313,7 +2313,7 @@ dependencies = [
 
 [[package]]
 name = "pdcst"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "atom_syndication",
@@ -4846,7 +4846,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "wsola"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "proptest",

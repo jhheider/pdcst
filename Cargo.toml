@@ -14,7 +14,7 @@ repository = "https://github.com/jhheider/pdcst"
 
 [workspace.dependencies]
 # Internal
-wsola = { path = "crates/wsola", version = "0.2" }
+wsola = { path = "crates/wsola", version = "0.3" }
 
 # TUI
 ratatui = "0.30"
