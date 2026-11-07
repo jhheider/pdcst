@@ -13,7 +13,7 @@ const SELECT_ALL_SUBSCRIPTIONS: &str = r#"
     SELECT s.id, s.title, s.description, s.author, s.rss_url, s.website_url,
            s.artwork_url, s.artwork_path, s.categories, s.auto_queue,
            s.auto_queue_to_top, s.queue_oldest_first, s.priority, s.auto_download, s.last_refreshed,
-           s.created_at, s.last_error,
+           s.playback_rate, s.created_at, s.last_error,
            COUNT(e.id) AS episode_count,
            COALESCE(SUM(CASE WHEN e.is_new = 1 AND e.played = 0 THEN 1 ELSE 0 END), 0) AS new_count,
            MAX(e.published_at) AS latest_episode_at
@@ -28,7 +28,7 @@ const SELECT_ONE_SUBSCRIPTION: &str = r#"
     SELECT s.id, s.title, s.description, s.author, s.rss_url, s.website_url,
            s.artwork_url, s.artwork_path, s.categories, s.auto_queue,
            s.auto_queue_to_top, s.queue_oldest_first, s.priority, s.auto_download, s.last_refreshed,
-           s.created_at, s.last_error,
+           s.playback_rate, s.created_at, s.last_error,
            COUNT(e.id) AS episode_count,
            COALESCE(SUM(CASE WHEN e.is_new = 1 AND e.played = 0 THEN 1 ELSE 0 END), 0) AS new_count,
            MAX(e.published_at) AS latest_episode_at
@@ -58,6 +58,7 @@ fn row_to_subscription(row: &SqliteRow) -> Result<Subscription> {
         queue_oldest_first: row.try_get("queue_oldest_first")?,
         priority: row.try_get::<String, _>("priority")?.parse().unwrap(),
         auto_download: row.try_get("auto_download")?,
+        playback_rate: row.try_get("playback_rate").ok().flatten(),
         last_refreshed: row.try_get("last_refreshed")?,
         created_at: row.try_get("created_at")?,
         last_error: row.try_get("last_error")?,
@@ -80,8 +81,8 @@ impl Database {
             INSERT INTO subscriptions
             (id, title, description, author, rss_url, website_url, artwork_url, artwork_path,
              categories, auto_queue, auto_queue_to_top, queue_oldest_first, priority, auto_download,
-             last_refreshed, created_at, last_error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             last_refreshed, created_at, last_error, playback_rate)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(sub.id.to_string())
@@ -101,6 +102,7 @@ impl Database {
         .bind(sub.last_refreshed)
         .bind(sub.created_at)
         .bind(&sub.last_error)
+        .bind(sub.playback_rate)
         .execute(&self.pool)
         .await
         .context("Failed to insert subscription")?;

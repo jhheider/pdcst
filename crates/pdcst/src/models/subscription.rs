@@ -58,6 +58,9 @@ pub struct Subscription {
     #[serde(default)]
     pub queue_oldest_first: bool,
     pub priority: SubscriptionPriority,
+    /// Per-podcast playback speed (1.0 = normal). None = use global default.
+    #[serde(default)]
+    pub playback_rate: Option<f32>,
     pub auto_download: bool,
     pub last_refreshed: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
@@ -95,6 +98,7 @@ impl Subscription {
             auto_queue_to_top: false,
             queue_oldest_first: false,
             priority: SubscriptionPriority::Medium,
+            playback_rate: None,
             auto_download: false,
             last_refreshed: now,
             created_at: now,

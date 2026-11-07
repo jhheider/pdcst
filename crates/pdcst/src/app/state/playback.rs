@@ -110,6 +110,14 @@ impl AppState {
     ) -> Result<()> {
         tracing::info!("Playing episode: {}", episode.title);
 
+        // Apply per-podcast playback speed if set.
+        if let Ok(Some(sub)) = self.db.get_subscription(episode.subscription_id).await {
+            if let Some(rate) = sub.playback_rate {
+                self.audio_player.set_speed(rate).await;
+                self.playback_speed = rate;
+            }
+        }
+
         // Playing acknowledges the episode: it is no longer "new".
         let _ = self.db.mark_episode_seen(episode.id).await;
 
