@@ -157,6 +157,16 @@ impl Database {
 
     /// Set a subscription's episode order (false = newest-first, true =
     /// oldest-first).
+    pub async fn update_subscription_playback_rate(&self, id: Uuid, rate: Option<f32>) -> Result<()> {
+        sqlx::query("UPDATE subscriptions SET playback_rate = ? WHERE id = ?")
+            .bind(rate)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to update subscription playback rate")?;
+        Ok(())
+    }
+
     pub async fn update_subscription_queue_order(
         &self,
         id: Uuid,

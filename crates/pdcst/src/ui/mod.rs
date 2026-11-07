@@ -965,6 +965,7 @@ impl Ui {
             Line::from("  +/-      Volume up/down"),
             Line::from("  m        Mute"),
             Line::from("  [/]      Speed down/up"),
+            Line::from("  V        Cycle podcast speed (default/1.0/1.25/1.5/1.75/2.0)"),
             Line::from("  t        Sleep timer (15/30/45/60/off)"),
             Line::from("  a        Add to queue"),
             Line::from("  d        Download episode"),

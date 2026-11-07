@@ -440,6 +440,36 @@ impl AppState {
 
     /// `O`: flip the selected feed's episode order (newest-first <-> oldest-first)
     /// and re-sort its episode pane immediately.
+    pub async fn cycle_selected_playback_rate(&mut self) -> Result<()> {
+        if self.current_view == View::Subscriptions
+            && let Some(sub) = self.subscriptions.get(self.subscription_index).cloned()
+        {
+            // Cycle: None -> 1.0 -> 1.25 -> 1.5 -> 1.75 -> 2.0 -> None
+            let next = match sub.playback_rate {
+                None => Some(1.0),
+                Some(r) if r < 1.1 => Some(1.25),
+                Some(r) if r < 1.35 => Some(1.5),
+                Some(r) if r < 1.6 => Some(1.75),
+                Some(r) if r < 1.85 => Some(2.0),
+                _ => None,
+            };
+            self.db.update_subscription_playback_rate(sub.id, next).await?;
+            self.set_status(format!(
+                "{} - speed: {}",
+                sub.title,
+                next.map(|r| format!("{:.2}x", r))
+                    .unwrap_or_else(|| "default".to_string())
+            ));
+            self.load_subscriptions().await?;
+            if self.current_subscription.as_ref().map(|s| s.id) == Some(sub.id) {
+                if let Some(cur) = self.current_subscription.as_mut() {
+                    cur.playback_rate = next;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn toggle_selected_queue_order(&mut self) -> Result<()> {
         if self.current_view == View::Subscriptions
             && let Some(sub) = self.subscriptions.get(self.subscription_index).cloned()

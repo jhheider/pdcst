@@ -342,6 +342,13 @@ impl App {
                     self.state.show_error(format!("Failed to set order: {}", e));
                 }
             }
+            // Cycle the selected subscription's playback speed.
+            KeyCode::Char('V') => {
+                if let Err(e) = self.state.cycle_selected_playback_rate().await {
+                    self.state
+                        .show_error(format!("Failed to set speed: {}", e));
+                }
+            }
 
             // Search
             KeyCode::Char('/') => {
