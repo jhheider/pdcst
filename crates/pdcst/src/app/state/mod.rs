@@ -178,6 +178,10 @@ pub struct AppState {
     /// When the resume position was last checkpointed to the DB, so the 1s
     /// position tick can throttle saves to `save_position_interval_seconds`.
     pub last_position_save: Option<std::time::Instant>,
+    /// Sleep timer: when set, playback pauses after this instant.
+    pub sleep_timer: Option<std::time::Instant>,
+    /// Sleep timer duration in minutes (for display).
+    pub sleep_timer_minutes: u32,
 }
 
 /// The shared services AppState is built from, grouped so AppState::new does not
@@ -275,6 +279,8 @@ impl AppState {
             stream_retry_attempts: 0,
             stream_interrupted: false,
             last_position_save: None,
+            sleep_timer: None,
+            sleep_timer_minutes: 0,
         }
     }
 

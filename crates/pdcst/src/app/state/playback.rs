@@ -9,6 +9,30 @@ use super::*;
 const STREAM_RETRY_DELAY: Duration = Duration::from_secs(2);
 
 impl AppState {
+    /// Set a sleep timer that pauses playback after `minutes` minutes.
+    /// Pass 0 to cancel.
+    pub async fn set_sleep_timer(&mut self, minutes: u32) {
+        if minutes == 0 {
+            self.sleep_timer = None;
+            self.sleep_timer_minutes = 0;
+            self.set_status("Sleep timer cancelled".to_string());
+            return;
+        }
+        let fire_at = std::time::Instant::now() + std::time::Duration::from_secs(minutes as u64 * 60);
+        self.sleep_timer = Some(fire_at);
+        self.sleep_timer_minutes = minutes;
+        self.set_status(format!("Sleep timer: {} min", minutes));
+
+        // Spawn a task that pauses playback when the timer fires.
+        let audio_player = self.audio_player.clone();
+        let event_bus = self.event_bus.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(minutes as u64 * 60)).await;
+            audio_player.pause().await;
+            event_bus.publish(StateEvent::PlaybackPaused);
+        });
+    }
+
     pub async fn toggle_playback(&mut self) -> Result<()> {
         if self.is_playing {
             self.audio_player.pause().await;

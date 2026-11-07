@@ -822,6 +822,15 @@ impl Ui {
                 Span::styled(" | ", dim),
                 Span::styled(format!("Vol {:.0}%", state.volume * 100.0), dim),
                 Span::styled(" | ", dim),
+                Span::styled(
+                    if state.sleep_timer_minutes > 0 {
+                        format!("Sleep: {}m", state.sleep_timer_minutes)
+                    } else {
+                        String::new()
+                    },
+                    dim,
+                ),
+                Span::styled(" | ", dim),
                 Span::styled(format!("Up Next: {queue_len}"), up_next_style),
             ]))
         } else {
@@ -956,6 +965,7 @@ impl Ui {
             Line::from("  +/-      Volume up/down"),
             Line::from("  m        Mute"),
             Line::from("  [/]      Speed down/up"),
+            Line::from("  t        Sleep timer (15/30/45/60/off)"),
             Line::from("  a        Add to queue"),
             Line::from("  d        Download episode"),
             Line::from("  x        Remove (queue) / delete download"),

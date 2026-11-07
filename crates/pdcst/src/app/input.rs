@@ -154,6 +154,18 @@ impl App {
             }
 
             // Playback speed controls
+            KeyCode::Char('t') => {
+                // Cycle sleep timer: off -> 15 -> 30 -> 45 -> 60 -> off
+                let next = match self.state.sleep_timer_minutes {
+                    0 => 15,
+                    15 => 30,
+                    30 => 45,
+                    45 => 60,
+                    _ => 0,
+                };
+                self.state.set_sleep_timer(next).await;
+                return Ok(());
+            }
             KeyCode::Char('[') => {
                 if let Err(e) = self.state.decrease_speed(0.1).await {
                     tracing::error!("Speed error: {}", e);
