@@ -21,7 +21,7 @@ ratatui = "0.30"
 crossterm = "0.29"
 
 # Async
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.54", features = ["full"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["codec"] }
 
