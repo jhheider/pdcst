@@ -453,7 +453,9 @@ impl AppState {
                 Some(r) if r < 1.85 => Some(2.0),
                 _ => None,
             };
-            self.db.update_subscription_playback_rate(sub.id, next).await?;
+            self.db
+                .update_subscription_playback_rate(sub.id, next)
+                .await?;
             self.set_status(format!(
                 "{} - speed: {}",
                 sub.title,
@@ -461,11 +463,10 @@ impl AppState {
                     .unwrap_or_else(|| "default".to_string())
             ));
             self.load_subscriptions().await?;
-            if self.current_subscription.as_ref().map(|s| s.id) == Some(sub.id) {
-                if let Some(cur) = self.current_subscription.as_mut() {
+            if self.current_subscription.as_ref().map(|s| s.id) == Some(sub.id)
+                && let Some(cur) = self.current_subscription.as_mut() {
                     cur.playback_rate = next;
                 }
-            }
         }
         Ok(())
     }
