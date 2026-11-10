@@ -464,9 +464,10 @@ impl AppState {
             ));
             self.load_subscriptions().await?;
             if self.current_subscription.as_ref().map(|s| s.id) == Some(sub.id)
-                && let Some(cur) = self.current_subscription.as_mut() {
-                    cur.playback_rate = next;
-                }
+                && let Some(cur) = self.current_subscription.as_mut()
+            {
+                cur.playback_rate = next;
+            }
         }
         Ok(())
     }
